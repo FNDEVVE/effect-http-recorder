@@ -1,18 +1,17 @@
-import { NodeFileSystem } from "@effect/platform-node"
-import { Deferred, Effect, Exit, FiberSet, Layer, Ref, Scope, Semaphore } from "effect"
+import { NodeFileSystem } from "@effect/platform-node-shared"
+import { Deferred, Effect, Exit, FiberSet, Layer, Option, Ref, Scope, Semaphore } from "effect"
 import { Socket } from "effect/unstable/socket"
-import * as CassetteService from "./cassette.js"
-import { canonicalizeJson, decodeJson, safeText } from "./matching.js"
-import { makeReplayState, resolveAutoMode } from "./recorder.js"
-import { make, type Redactor } from "./redactor.js"
-import { webSocketInteractions } from "./schema.js"
-import type {
-  SocketRecorderOptions,
-  WebSocketEvent,
-  WebSocketInteraction,
-  WebSocketRecorderOptions,
-  WebSocketRequest,
-} from "./types.js"
+import * as CassetteService from "../cassette/store.js"
+import type { SocketRecorderOptions } from "../options.js"
+import { make, type Redactor } from "../redaction/redactor.js"
+import { canonicalizeJson, decodeJson, safeText } from "../replay/comparison.js"
+import { makeReplayState, resolveAutoMode } from "../replay/state.js"
+import { webSocketInteractions } from "../cassette/model.js"
+import type { WebSocketEvent, WebSocketInteraction } from "./model.js"
+
+interface WebSocketRecorderOptions extends SocketRecorderOptions {
+  readonly compareClientMessagesAsJson?: boolean
+}
 
 interface ActiveReplay {
   readonly interaction: WebSocketInteraction
@@ -124,21 +123,10 @@ const runReplay = <A, E, R>(
     }),
   )
 
-const openSnapshot = (request: WebSocketRequest, redactor: Redactor) => {
-  const snapshot = redactor.request({
-    method: "GET",
-    url: request.url,
-    headers: request.headers ?? {},
-    body: "",
-  })
-  return { url: snapshot.url, headers: snapshot.headers }
-}
-
 const makeRecordingSocket = (
   upstream: Socket.Socket,
   cassette: CassetteService.Interface,
   name: string,
-  request: WebSocketRequest,
   options: WebSocketRecorderOptions,
   redactor: Redactor,
 ) =>
@@ -186,7 +174,6 @@ const makeRecordingSocket = (
                           name,
                           {
                             transport: "websocket",
-                            open: openSnapshot(request, redactor),
                             events: [...state.events],
                           },
                           options.metadata,
@@ -220,49 +207,47 @@ const makeRecordingSocket = (
 const makeReplaySocket = (
   cassette: CassetteService.Interface,
   name: string,
-  request: WebSocketRequest,
   options: WebSocketRecorderOptions,
   redactor: Redactor,
 ): Effect.Effect<Socket.Socket, never, Scope.Scope> =>
   Effect.gen(function* () {
     const replay = yield* makeReplayState(cassette, name, webSocketInteractions)
     const active = yield* Ref.make<ActiveReplay | undefined>(undefined)
+    const runLock = yield* Semaphore.make(1)
 
     return Socket.make({
       runRaw: (handler, runOptions) =>
-        Effect.gen(function* () {
-          const claimed = yield* replay
-            .claim((interaction, index) =>
-              Effect.sync(() => {
-                const incoming = openSnapshot(request, redactor)
-                if (
-                  interaction &&
-                  JSON.stringify(canonicalizeJson(incoming)) === JSON.stringify(canonicalizeJson(interaction.open))
+        runLock
+          .withPermitsIfAvailable(1)(
+            Effect.gen(function* () {
+              const claimed = yield* replay
+                .claim((interaction) =>
+                  interaction ? Effect.void : Effect.die("Missing recorded WebSocket interaction"),
                 )
-                  return
-                throw new Error(
-                  `WebSocket open ${index + 1}: expected ${safeText(interaction?.open)}, received ${safeText(incoming)}`,
-                )
-              }),
-            )
-            .pipe(Effect.orDie)
-          const progress = yield* Ref.make({
-            position: 0,
-            changed: yield* Deferred.make<void>(),
-          })
-          const writeLock = yield* Semaphore.make(1)
-          const state = {
-            interaction: claimed.interaction,
-            progress,
-            writeLock,
-            closed: yield* Ref.make(false),
-          }
-          const occupied = yield* Ref.modify(active, (current) => [current !== undefined, current ?? state])
-          if (occupied) return yield* Effect.die("Concurrent runs of a replayed WebSocket are not supported")
-          yield* runReplay(state, handler, decodeEvent, runOptions?.onOpen).pipe(
-            Effect.ensuring(Ref.set(active, undefined)),
+                .pipe(Effect.orDie)
+              const state = {
+                interaction: claimed.interaction,
+                progress: yield* Ref.make({
+                  position: 0,
+                  changed: yield* Deferred.make<void>(),
+                }),
+                writeLock: yield* Semaphore.make(1),
+                closed: yield* Ref.make(false),
+              }
+              yield* Ref.set(active, state)
+              yield* runReplay(state, handler, decodeEvent, runOptions?.onOpen).pipe(
+                Effect.ensuring(Ref.set(active, undefined)),
+              )
+            }),
           )
-        }),
+          .pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.die("Concurrent runs of a replayed WebSocket are not supported"),
+                onSome: () => Effect.void,
+              }),
+            ),
+          ),
       writer: Effect.succeed((message) => {
         return Ref.get(active).pipe(
           Effect.flatMap((state) =>
@@ -303,7 +288,6 @@ const makeReplaySocket = (
 
 const recordingLayer = (
   name: string,
-  request: WebSocketRequest,
   options: WebSocketRecorderOptions,
   forcedMode?: "record" | "replay",
 ): Layer.Layer<Socket.Socket, never, Socket.Socket | CassetteService.Service> =>
@@ -314,8 +298,8 @@ const recordingLayer = (
       const cassette = yield* CassetteService.Service
       const redactor = make(options.redact)
       if ((forcedMode ?? (yield* resolveAutoMode(cassette, name))) === "record")
-        return yield* makeRecordingSocket(upstream, cassette, name, request, options, redactor)
-      return yield* makeReplaySocket(cassette, name, request, options, redactor)
+        return yield* makeRecordingSocket(upstream, cassette, name, options, redactor)
+      return yield* makeReplaySocket(cassette, name, options, redactor)
     }),
   )
 
@@ -334,15 +318,14 @@ export const socket = (
   name: string,
   options: SocketRecorderOptions = {},
 ): Layer.Layer<Socket.Socket, never, Socket.Socket> =>
-  provideCassette(recordingLayer(name, { url: "" }, { ...options, compareClientMessagesAsJson: true }), options)
+  provideCassette(recordingLayer(name, { ...options, compareClientMessagesAsJson: true }), options)
 
 /** @internal */
 export const socketLayer = (
   name: string,
-  request: WebSocketRequest,
   options: WebSocketRecorderOptions & { readonly mode: "record" | "replay" },
 ): Layer.Layer<Socket.Socket, never, Socket.Socket> =>
-  provideCassette(recordingLayer(name, request, options, options.mode), options)
+  provideCassette(recordingLayer(name, options, options.mode), options)
 
 const provideCassette = (
   layer: Layer.Layer<Socket.Socket, never, Socket.Socket | CassetteService.Service>,

@@ -10,7 +10,7 @@
 4. From a branch based on the latest `dev`, run `bun run version`.
 5. Review the generated version and `CHANGELOG.md`, then open and merge the release PR.
 
-The initial `0.1.0` import is the only release that does not require a Changeset.
+The initial `0.1.0` release is the only release that does not require a Changeset.
 
 ## Verify And Publish
 
@@ -22,7 +22,13 @@ bun run check
 
 After the release PR reaches `dev`, manually dispatch the `release` workflow from the `dev` branch. The workflow repeats the focused tests, builds and verifies the exact tarball in a clean npm consumer, and publishes it with provenance under the `beta` tag.
 
-The bootstrap release requires an `NPM_TOKEN` repository secret because npm trusted publishing cannot be configured for a package that does not exist yet. Do not copy credentials from another repository. After the package exists, configure its npm trusted publisher for repository `anomalyco/effect-http-recorder` and workflow `release.yml`, then remove `NODE_AUTH_TOKEN` from the workflow so later releases authenticate through GitHub OIDC.
+The bootstrap release requires a short-lived `NPM_TOKEN` repository secret because npm trusted publishing cannot be configured for a package that does not exist yet. Do not copy credentials from another repository. After the package exists:
+
+1. Configure its npm trusted publisher for repository `anomalyco/effect-http-recorder` and workflow `release.yml`.
+2. Verify one release through GitHub OIDC.
+3. Remove `NODE_AUTH_TOKEN` from the workflow.
+4. Delete the GitHub secret and revoke the bootstrap npm token.
+5. Require 2FA and trusted publishing for future releases.
 
 Verify the result:
 

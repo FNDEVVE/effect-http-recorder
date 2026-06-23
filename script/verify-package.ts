@@ -2,7 +2,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { pack } from "./pack.js"
+import { withPackedArchive } from "./pack.js"
 
 const pkg = await Bun.file(new URL("../package.json", import.meta.url)).json()
 if (
@@ -19,12 +19,16 @@ if (
   typeof pkg.devDependencies !== "object" ||
   pkg.devDependencies === null ||
   !("typescript" in pkg.devDependencies) ||
-  typeof pkg.devDependencies.typescript !== "string"
+  typeof pkg.devDependencies.typescript !== "string" ||
+  !("@effect/platform-node-shared" in pkg.dependencies) ||
+  typeof pkg.dependencies["@effect/platform-node-shared"] !== "string" ||
+  !("@effect/platform-node" in pkg.devDependencies) ||
+  typeof pkg.devDependencies["@effect/platform-node"] !== "string"
 )
   throw new Error("Invalid package metadata")
 
 const run = async (command: ReadonlyArray<string>, cwd: string) => {
-  const process = Bun.spawn(command, {
+  const process = Bun.spawn([...command], {
     cwd,
     env: globalThis.process.env,
     stdout: "inherit",
@@ -32,6 +36,11 @@ const run = async (command: ReadonlyArray<string>, cwd: string) => {
   })
   const exitCode = await process.exited
   if (exitCode !== 0) throw new Error(`${command.join(" ")} exited with code ${exitCode}`)
+}
+
+const reject = async (command: ReadonlyArray<string>, cwd: string) => {
+  const process = Bun.spawn([...command], { cwd, env: globalThis.process.env, stdout: "ignore", stderr: "ignore" })
+  if ((await process.exited) === 0) throw new Error(`${command.join(" ")} unexpectedly succeeded`)
 }
 
 export const verifyPackage = async (archive: string) => {
@@ -43,6 +52,11 @@ export const verifyPackage = async (archive: string) => {
         name: "http-recorder-consumer",
         private: true,
         type: "module",
+        overrides: {
+          "@effect/platform-node": {
+            "@effect/platform-node-shared": pkg.dependencies["@effect/platform-node-shared"],
+          },
+        },
       }),
     )
     await writeFile(
@@ -61,6 +75,21 @@ HttpRecorder.socket("consumer/socket", socketOptions).pipe(
 ) satisfies Layer.Layer<Socket.Socket>
 // @ts-expect-error HTTP request matching does not apply to WebSocket frames.
 HttpRecorder.socket("consumer/socket", { match: () => true })
+`,
+    )
+    await writeFile(
+      path.join(directory, "exports.mjs"),
+      `import { HttpRecorder } from ${JSON.stringify(pkg.name)}
+
+const namespace = Object.keys(HttpRecorder).sort()
+if (JSON.stringify(namespace) !== JSON.stringify(["http", "socket"])) {
+  throw new Error(\`Unexpected HttpRecorder exports: \${namespace}\`)
+}
+`,
+    )
+    await writeFile(
+      path.join(directory, "deep-import.mjs"),
+      `import ${JSON.stringify(`${pkg.name}/http/recorder`)}
 `,
     )
     await writeFile(
@@ -91,29 +120,19 @@ HttpRecorder.socket("consumer/socket", { match: () => true })
         archive,
         `typescript@${pkg.devDependencies.typescript}`,
         `effect@${pkg.peerDependencies.effect}`,
+        `@effect/platform-node-shared@${pkg.dependencies["@effect/platform-node-shared"]}`,
+        `@effect/platform-node@${pkg.devDependencies["@effect/platform-node"]}`,
       ],
       directory,
     )
-    await run(
-      [
-        "node",
-        "--input-type=module",
-        "-e",
-        `import(${JSON.stringify(pkg.name)}).then((module) => { const root = Object.keys(module).sort(); const namespace = Object.keys(module.HttpRecorder).sort(); if (JSON.stringify(root) !== JSON.stringify(["HttpRecorder"])) throw new Error(\`Unexpected root exports: \${root}\`); if (JSON.stringify(namespace) !== JSON.stringify(["http", "socket"])) throw new Error(\`Unexpected namespace exports: \${namespace}\`) })`,
-      ],
-      directory,
-    )
+    await run(["node", path.join(directory, "exports.mjs")], directory)
+    await run(["bun", path.join(directory, "exports.mjs")], directory)
+    await reject(["node", path.join(directory, "deep-import.mjs")], directory)
+    await run(["npm", "ls", "effect", "@effect/platform-node-shared", "--all"], directory)
     await run([path.join(directory, "node_modules", ".bin", "tsc"), "--noEmit"], directory)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
 }
 
-if (import.meta.main) {
-  const archive = await pack()
-  try {
-    await verifyPackage(archive)
-  } finally {
-    await Bun.file(archive).delete()
-  }
-}
+if (import.meta.main) await withPackedArchive(verifyPackage)

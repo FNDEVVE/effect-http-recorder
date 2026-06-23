@@ -1,8 +1,8 @@
 import { Context, Effect, FileSystem, Layer, Schema, Semaphore } from "effect"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { secretFindings, SecretFindingSchema, type SecretFinding } from "./redaction.js"
-import { CassetteSchema, encodeCassette, type Cassette, type CassetteMetadata, type Interaction } from "./schema.js"
+import { secretFindings, SecretFindingSchema, type SecretFinding } from "../redaction/secrets.js"
+import { CassetteSchema, encodeCassette, type Cassette, type CassetteMetadata, type Interaction } from "./model.js"
 
 const DEFAULT_RECORDINGS_DIR = path.resolve(process.cwd(), "test", "fixtures", "recordings")
 
@@ -11,6 +11,15 @@ export class CassetteNotFoundError extends Schema.TaggedErrorClass<CassetteNotFo
 }) {
   override get message() {
     return `Cassette "${this.cassetteName}" not found`
+  }
+}
+
+export class InvalidCassetteError extends Schema.TaggedErrorClass<InvalidCassetteError>()("InvalidCassetteError", {
+  cassetteName: Schema.String,
+  description: Schema.String,
+}) {
+  override get message() {
+    return `Cassette "${this.cassetteName}" is invalid: ${this.description}`
   }
 }
 
@@ -26,7 +35,9 @@ export class UnsafeCassetteError extends Schema.TaggedErrorClass<UnsafeCassetteE
 }
 
 export interface Interface {
-  readonly read: (name: string) => Effect.Effect<ReadonlyArray<Interaction>, CassetteNotFoundError>
+  readonly read: (
+    name: string,
+  ) => Effect.Effect<ReadonlyArray<Interaction>, CassetteNotFoundError | InvalidCassetteError>
   readonly append: (
     name: string,
     interaction: Interaction,
@@ -58,13 +69,19 @@ const buildCassette = (
   metadata: CassetteMetadata | undefined,
 ): Cassette => ({
   version: 1,
-  metadata: { name, recordedAt: new Date().toISOString(), ...metadata },
+  metadata: { ...metadata, name, recordedAt: new Date().toISOString() },
   interactions,
 })
 
 const formatCassette = (cassette: Cassette) => `${JSON.stringify(encodeCassette(cassette), null, 2)}\n`
 
 const parseCassette = Schema.decodeUnknownSync(Schema.fromJsonString(CassetteSchema))
+
+const invalidCassette = (name: string, error: unknown) =>
+  new InvalidCassetteError({
+    cassetteName: name,
+    description: error instanceof Error ? error.message : String(error),
+  })
 
 const failIfUnsafe = (name: string, findings: ReadonlyArray<SecretFinding>) =>
   findings.length === 0 ? Effect.void : Effect.fail(new UnsafeCassetteError({ cassetteName: name, findings }))
@@ -98,8 +115,17 @@ export const fileSystem = (
       return Service.of({
         read: (name) =>
           fs.readFileString(pathFor(name)).pipe(
-            Effect.map((raw) => parseCassette(raw).interactions),
-            Effect.catch(() => Effect.fail(new CassetteNotFoundError({ cassetteName: name }))),
+            Effect.mapError((error) =>
+              error.reason._tag === "NotFound"
+                ? new CassetteNotFoundError({ cassetteName: name })
+                : invalidCassette(name, error),
+            ),
+            Effect.flatMap((raw) =>
+              Effect.try({
+                try: () => parseCassette(raw).interactions,
+                catch: (error) => invalidCassette(name, error),
+              }),
+            ),
           ),
         append: (name, interaction, metadata) =>
           appendLock.withPermit(
@@ -168,7 +194,7 @@ export const memory = (initial: Record<string, ReadonlyArray<Interaction>> = {})
           Effect.suspend(() => {
             const interactions = [...(stored.get(name) ?? []), interaction]
             const findings = [...(accumulatedFindings.get(name) ?? []), ...secretFindings(interaction)]
-            const allFindings = metadata ? [...findings, ...secretFindings({ name, ...metadata })] : findings
+            const allFindings = metadata ? [...findings, ...secretFindings({ ...metadata, name })] : findings
             return failIfUnsafe(name, allFindings).pipe(
               Effect.tap(() =>
                 Effect.sync(() => {

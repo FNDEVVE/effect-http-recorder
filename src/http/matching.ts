@@ -1,26 +1,9 @@
-import { Option, Schema } from "effect"
-import { REDACTED, secretFindings } from "./redaction.js"
-import type { HttpInteraction, RequestMatcher, RequestSnapshot } from "./types.js"
+import { Option } from "effect"
+import type { RequestMatcher, RequestSnapshot } from "../api.js"
+import { canonicalizeJson, decodeJson, isJsonRecord, jsonBody, safeText } from "../replay/comparison.js"
+import type { HttpInteraction } from "./model.js"
 
-const JsonValue = Schema.fromJsonString(Schema.Unknown)
-export const decodeJson = Schema.decodeUnknownOption(JsonValue)
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
-
-export const canonicalizeJson = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(canonicalizeJson)
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.keys(value)
-        .toSorted()
-        .map((key) => [key, canonicalizeJson(value[key])]),
-    )
-  }
-  return value
-}
-
-export type { RequestMatcher } from "./types.js"
+export type { RequestMatcher } from "../api.js"
 
 export const canonicalSnapshot = (snapshot: RequestSnapshot): string =>
   JSON.stringify({
@@ -36,19 +19,9 @@ export const canonicalSnapshot = (snapshot: RequestSnapshot): string =>
 export const defaultMatcher: RequestMatcher = (incoming, recorded) =>
   canonicalSnapshot(incoming) === canonicalSnapshot(recorded)
 
-export const safeText = (value: unknown) => {
-  if (value === undefined) return "undefined"
-  if (secretFindings(value).length > 0) return JSON.stringify(REDACTED)
-  const text = JSON.stringify(value)
-  if (!text) return typeof value
-  return text.length > 300 ? `${text.slice(0, 300)}...` : text
-}
-
-const jsonBody = (body: string) => Option.getOrUndefined(decodeJson(body))
-
 const valueDiffs = (expected: unknown, received: unknown, base = "$", limit = 8): ReadonlyArray<string> => {
   if (Object.is(expected, received)) return []
-  if (isRecord(expected) && isRecord(received)) {
+  if (isJsonRecord(expected) && isJsonRecord(received)) {
     return [...new Set([...Object.keys(expected), ...Object.keys(received)])]
       .toSorted()
       .flatMap((key) => valueDiffs(expected[key], received[key], `${base}.${key}`, limit))
@@ -114,3 +87,5 @@ export const selectSequential = (
     }
   return { interaction, detail: "" }
 }
+
+export * as HttpMatching from "./matching.js"

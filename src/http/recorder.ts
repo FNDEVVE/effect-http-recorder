@@ -1,4 +1,4 @@
-import { NodeFileSystem } from "@effect/platform-node"
+import { NodeFileSystem } from "@effect/platform-node-shared"
 import { Deferred, Effect, Layer, Option, Ref } from "effect"
 import {
   FetchHttpClient,
@@ -10,13 +10,14 @@ import {
   HttpClientResponse,
   UrlParams,
 } from "effect/unstable/http"
-import * as CassetteService from "./cassette.js"
-import { defaultMatcher, selectSequential } from "./matching.js"
-import { makeReplayState, resolveAutoMode } from "./recorder.js"
-import { make, type Redactor } from "./redactor.js"
-import { redactUrl } from "./redaction.js"
-import { httpInteractions } from "./schema.js"
-import type { CassetteMetadata, HttpInteraction, RequestMatcher, ResponseSnapshot } from "./types.js"
+import * as CassetteService from "../cassette/store.js"
+import type { RecorderOptions } from "../options.js"
+import { make, redactUrl, type Redactor } from "../redaction/redactor.js"
+import { makeReplayState, resolveAutoMode } from "../replay/state.js"
+import { httpInteractions } from "../cassette/model.js"
+import { defaultMatcher, selectSequential, type RequestMatcher } from "./matching.js"
+import type { HttpInteraction, ResponseSnapshot } from "./model.js"
+import type { CassetteMetadata } from "../cassette/model.js"
 
 export { defaultMatcher }
 
@@ -178,7 +179,7 @@ export const recordingLayer = (
                       request,
                       `Fixture "${name}" not found. Run locally to record it (CI=true forces replay).`,
                     )
-                  : error,
+                  : transportError(request, error.message),
               ),
             )
           return responseFromSnapshot(request, claimed.interaction.response)
@@ -193,3 +194,17 @@ export const cassetteLayer = (name: string, options: RecordReplayOptions = {}): 
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(NodeFileSystem.layer),
   )
+
+/**
+ * Provides a fetch-backed `HttpClient` with cassette recording and replay.
+ *
+ * Locally, a missing cassette is recorded from the real service. Existing
+ * cassettes are replayed, and `CI=true` makes a missing cassette fail.
+ */
+export const http = (name: string, options: RecorderOptions = {}): Layer.Layer<HttpClient.HttpClient> =>
+  cassetteLayer(name, {
+    directory: options.directory,
+    metadata: options.metadata,
+    redactor: make(options.redact),
+    match: options.match,
+  })

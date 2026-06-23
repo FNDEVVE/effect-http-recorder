@@ -9,8 +9,8 @@ Use it for provider integrations, retries, polling, multi-step flows, and any te
 ## Install
 
 ```sh
-bun add effect@4.0.0-beta.83 @effect/platform-node@4.0.0-beta.83
-bun add -d effect-http-recorder@beta @effect/vitest vitest
+bun add effect@4.0.0-beta.83
+bun add -d effect-http-recorder@beta @effect/vitest@4.0.0-beta.83 vitest@^4
 ```
 
 The package supports Node.js 22+ and Bun. It is not intended for browsers, workers, or Deno.
@@ -85,7 +85,9 @@ HttpRecorder.http(name, options?)
 HttpRecorder.socket(name, options?)
 ```
 
-That is the complete public API. `http` provides a fetch-backed recorded `HttpClient`. `socket` decorates a standard Effect `Socket.Socket` supplied beneath it.
+That is the complete runtime API. `http` provides a fetch-backed recorded `HttpClient`. `socket` decorates a standard Effect `Socket.Socket` supplied beneath it.
+
+The `HttpRecorder` namespace also exposes the configuration types `RecorderOptions`, `SocketRecorderOptions`, `RedactOptions`, `RequestMatcher`, `RequestSnapshot`, and `CassetteMetadata`.
 
 ## WebSockets
 
@@ -208,7 +210,7 @@ HttpRecorder.http("events/create", {
 ```ts
 interface RecorderOptions {
   readonly directory?: string
-  readonly metadata?: Record<string, unknown>
+  readonly metadata?: Readonly<Record<string, JsonValue>>
   readonly redact?: RedactOptions
   readonly match?: RequestMatcher
 }
@@ -217,6 +219,8 @@ type SocketRecorderOptions = Omit<RecorderOptions, "match">
 ```
 
 `directory` defaults to `<cwd>/test/fixtures/recordings`.
+
+See [`examples/`](./examples) for complete HTTP and WebSocket examples.
 
 ## Cassettes
 

@@ -26,7 +26,10 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - run: bun install --frozen-lockfile
-      - run: bun run check
+      - run: bun run format:check
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run test
       - run: bun run release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,7 +1,7 @@
 import { Effect, Scope, SynchronizedRef } from "effect"
-import type * as CassetteService from "./cassette.js"
-import type { CassetteNotFoundError } from "./cassette.js"
-import type { Interaction } from "./schema.js"
+import type { Interaction } from "../cassette/model.js"
+import type * as CassetteService from "../cassette/store.js"
+import type { CassetteNotFoundError, InvalidCassetteError } from "../cassette/store.js"
 
 const isCI = () => {
   const value = process.env.CI
@@ -20,7 +20,10 @@ export const resolveAutoMode = (
 export interface ReplayState<T> {
   readonly claim: <E>(
     validate: (interaction: T | undefined, index: number, interactions: ReadonlyArray<T>) => Effect.Effect<void, E>,
-  ) => Effect.Effect<{ readonly interaction: T; readonly index: number }, CassetteNotFoundError | E>
+  ) => Effect.Effect<
+    { readonly interaction: T; readonly index: number },
+    CassetteNotFoundError | InvalidCassetteError | E
+  >
 }
 
 export const makeReplayState = <T>(
