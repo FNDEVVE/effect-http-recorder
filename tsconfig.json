@@ -6,7 +6,10 @@
     "moduleResolution": "nodenext",
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "noEmit": true,
-    "noUncheckedIndexedAccess": false
+    "noUncheckedIndexedAccess": false,
+    "paths": {
+      "effect-http-recorder": ["./src/index.ts"]
+    }
   },
   "include": ["src", "script", "examples"]
 }
