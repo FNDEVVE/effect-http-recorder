@@ -9,5 +9,6 @@ process.chdir(dir)
 
 await withPackedArchive(async (archive) => {
   await verifyPackage(archive)
-  await $`npm publish ${archive}`
+  if (process.env.GITHUB_ACTIONS === "true") return await $`npm publish ${archive} --tag beta --provenance`
+  await $`npm publish ${archive} --tag beta --provenance=false`
 })
