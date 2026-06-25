@@ -36,10 +36,11 @@
     "lint:fix": "oxlint --fix src test examples script",
     "check:imports": "bun ./script/check-static-imports.ts",
     "test": "bun test --timeout 30000 --only-failures",
+    "test:examples": "vitest run --config examples/vitest.config.ts",
     "typecheck": "tsgo --noEmit && tsgo -p test/tsconfig.json --noEmit",
     "build": "bun ./script/build.ts",
     "verify:package": "bun ./script/verify-package.ts",
-    "check": "bun run format:check && bun run lint && bun run check:imports && bun run typecheck && bun run test && bun run verify:package",
+    "check": "bun run format:check && bun run lint && bun run check:imports && bun run typecheck && bun run test && bun run test:examples && bun run verify:package",
     "version": "changeset version",
     "release": "bun ./script/publish.ts",
     "prepack": "bun run build"
