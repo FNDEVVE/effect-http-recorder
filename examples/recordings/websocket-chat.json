@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "websocket-chat",
+    "recordedAt": "2026-06-25T18:36:00.701Z"
+  },
+  "interactions": [
+    {
+      "transport": "websocket",
+      "connection": {
+        "sequence": 1,
+        "url": "wss://ws.postman-echo.com/raw/",
+        "protocols": [],
+        "close": {
+          "code": 1000,
+          "reason": ""
+        }
+      },
+      "events": [
+        {
+          "direction": "client",
+          "kind": "text",
+          "body": "{\"type\":\"join\",\"room\":\"random\"}"
+        },
+        {
+          "direction": "server",
+          "kind": "text",
+          "body": "{\"type\":\"join\",\"room\":\"random\"}"
+        },
+        {
+          "direction": "client",
+          "kind": "text",
+          "body": "{\"type\":\"message\",\"room\":\"random\",\"text\":\"Did you see that?\"}"
+        },
+        {
+          "direction": "client",
+          "kind": "text",
+          "body": "{\"type\":\"message\",\"room\":\"random\",\"text\":\"Incredible\"}"
+        },
+        {
+          "direction": "client",
+          "kind": "text",
+          "body": "{\"type\":\"message\",\"room\":\"random\",\"text\":\"Wow\"}"
+        },
+        {
+          "direction": "server",
+          "kind": "text",
+          "body": "{\"type\":\"message\",\"room\":\"random\",\"text\":\"Did you see that?\"}"
+        },
+        {
+          "direction": "server",
+          "kind": "text",
+          "body": "{\"type\":\"message\",\"room\":\"random\",\"text\":\"Incredible\"}"
+        },
+        {
+          "direction": "server",
+          "kind": "text",
+          "body": "{\"type\":\"message\",\"room\":\"random\",\"text\":\"Wow\"}"
+        }
+      ]
+    },
+    {
+      "transport": "websocket",
+      "connection": {
+        "sequence": 0,
+        "url": "wss://ws.postman-echo.com/raw",
+        "protocols": [],
+        "close": {
+          "code": 1000,
+          "reason": ""
+        }
+      },
+      "events": [
+        {
+          "direction": "client",
+          "kind": "text",
+          "body": "{\"type\":\"join\",\"room\":\"general\"}"
+        },
+        {
+          "direction": "server",
+          "kind": "text",
+          "body": "{\"type\":\"join\",\"room\":\"general\"}"
+        },
+        {
+          "direction": "client",
+          "kind": "text",
+          "body": "{\"type\":\"message\",\"room\":\"general\",\"text\":\"Hello!\"}"
+        },
+        {
+          "direction": "client",
+          "kind": "text",
+          "body": "{\"type\":\"message\",\"room\":\"general\",\"text\":\"Anyone around?\"}"
+        },
+        {
+          "direction": "client",
+          "kind": "text",
+          "body": "{\"type\":\"message\",\"room\":\"general\",\"text\":\"See you later\"}"
+        },
+        {
+          "direction": "server",
+          "kind": "text",
+          "body": "{\"type\":\"message\",\"room\":\"general\",\"text\":\"Hello!\"}"
+        },
+        {
+          "direction": "server",
+          "kind": "text",
+          "body": "{\"type\":\"message\",\"room\":\"general\",\"text\":\"Anyone around?\"}"
+        },
+        {
+          "direction": "server",
+          "kind": "text",
+          "body": "{\"type\":\"message\",\"room\":\"general\",\"text\":\"See you later\"}"
+        }
+      ]
+    }
+  ]
+}

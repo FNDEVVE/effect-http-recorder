@@ -1,52 +1,113 @@
 import { NodeSocket } from "@effect/platform-node"
 import { assert, it } from "@effect/vitest"
-import { Context, Deferred, Effect, Layer } from "effect"
+import { Context, Effect, Fiber, Layer, Queue, Schema, Stream } from "effect"
 import { Socket } from "effect/unstable/socket"
 import { HttpRecorder } from "effect-http-recorder"
 
-class EchoService extends Context.Service<EchoService>()("example/EchoService", {
+const Room = Schema.Literals(["general", "random"])
+const ChatEvent = Schema.Union([
+  Schema.Struct({ type: Schema.tag("join"), room: Room }),
+  Schema.Struct({ type: Schema.tag("message"), room: Room, text: Schema.String }),
+])
+const ChatEventJson = Schema.fromJsonString(ChatEvent)
+
+const rooms = {
+  general: "wss://ws.postman-echo.com/raw",
+  random: "wss://ws.postman-echo.com/raw/",
+} as const
+
+class Chat extends Context.Service<Chat>()("example/Chat", {
   make: Effect.gen(function* () {
     const constructor = yield* Socket.WebSocketConstructor
 
-    const roundTrip = Effect.fn("EchoService.roundTrip")(
-      function* (url: string, message: string) {
-        const socket = yield* Socket.makeWebSocket(url, { closeCodeIsError: () => false })
-        const write = yield* socket.writer
-        const echoed = yield* Deferred.make<string>()
-
-        yield* socket.runString(
-          (response) =>
-            Effect.gen(function* () {
-              if (response !== message) return
-              yield* Deferred.succeed(echoed, response)
-              yield* write(new Socket.CloseEvent(1000, "received echo")).pipe(Effect.orDie)
-            }),
-          { onOpen: write(message).pipe(Effect.orDie) },
+    const connect = Effect.fn("Chat.connect")(
+      function* (room: keyof typeof rooms) {
+        const socket = yield* Socket.makeWebSocket(rooms[room], { closeCodeIsError: () => false })
+        const outgoing = yield* Queue.bounded<string | Socket.CloseEvent>(16)
+        const incoming = yield* Stream.fromQueue(outgoing).pipe(
+          Stream.pipeThroughChannel(Socket.toChannelString(socket)),
+          Stream.mapEffect((message) => Schema.decodeEffect(ChatEventJson)(message)),
+          Stream.toQueue({ capacity: 16 }),
         )
 
-        return yield* Deferred.await(echoed)
+        yield* Schema.encodeEffect(ChatEventJson)({ type: "join", room }).pipe(
+          Effect.flatMap((message) => Queue.offer(outgoing, message)),
+        )
+        const joined = yield* Queue.take(incoming)
+        if (joined.type !== "join" || joined.room !== room) return yield* Effect.die(`Failed to join ${room}`)
+
+        const messages = Stream.fromQueue(incoming).pipe(
+          Stream.filter((event) => event.type === "message"),
+          Stream.map(({ room, text }) => ({ room, text })),
+        )
+        const send = Effect.fn("ChatRoom.send")((text: string) =>
+          Schema.encodeEffect(ChatEventJson)({ type: "message", room, text }).pipe(
+            Effect.flatMap((message) => Queue.offer(outgoing, message)),
+            Effect.asVoid,
+          ),
+        )
+        yield* Effect.addFinalizer(() =>
+          Queue.offer(outgoing, new Socket.CloseEvent(1000, `left ${room}`)).pipe(
+            Effect.andThen(Stream.runDrain(messages)),
+            Effect.orDie,
+          ),
+        )
+
+        return { room, messages, send } as const
       },
       Effect.provideService(Socket.WebSocketConstructor, constructor),
     )
 
-    return { roundTrip } as const
+    return { connect } as const
   }),
 }) {
   static readonly layer = Layer.effect(this, this.make)
 }
 
 it.effect(
-  "records connections selected by an application service",
+  "records messages across chat rooms",
   () =>
     Effect.gen(function* () {
-      const echo = yield* EchoService
+      const chat = yield* Chat
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const general = yield* chat.connect("general")
+          const random = yield* chat.connect("random")
 
-      assert.strictEqual(yield* echo.roundTrip("wss://ws.postman-echo.com/raw", "hello alpha"), "hello alpha")
-      assert.strictEqual(yield* echo.roundTrip("wss://ws.postman-echo.com/raw/", "hello beta"), "hello beta")
+          const generalMessages = yield* general.messages.pipe(
+            Stream.take(3),
+            Stream.runCollect,
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          const randomMessages = yield* random.messages.pipe(
+            Stream.take(3),
+            Stream.runCollect,
+            Effect.forkScoped({ startImmediately: true }),
+          )
+
+          yield* general.send("Hello!")
+          yield* random.send("Did you see that?")
+          yield* general.send("Anyone around?")
+          yield* random.send("Incredible")
+          yield* general.send("See you later")
+          yield* random.send("Wow")
+
+          assert.deepStrictEqual(yield* Fiber.join(generalMessages), [
+            { room: "general", text: "Hello!" },
+            { room: "general", text: "Anyone around?" },
+            { room: "general", text: "See you later" },
+          ])
+          assert.deepStrictEqual(yield* Fiber.join(randomMessages), [
+            { room: "random", text: "Did you see that?" },
+            { room: "random", text: "Incredible" },
+            { room: "random", text: "Wow" },
+          ])
+        }),
+      )
     }).pipe(
       Effect.provide(
-        EchoService.layer.pipe(
-          Layer.provide(HttpRecorder.layerWebSocketConstructor("websocket-echo", { directory: "examples/recordings" })),
+        Chat.layer.pipe(
+          Layer.provide(HttpRecorder.layerWebSocketConstructor("websocket-chat", { directory: "examples/recordings" })),
           Layer.provide(NodeSocket.layerWebSocketConstructor),
         ),
       ),

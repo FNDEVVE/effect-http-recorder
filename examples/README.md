@@ -1,7 +1,7 @@
 # Examples
 
-- [`github.example.ts`](./github.example.ts) runs two GitHub requests concurrently with random delays, demonstrating that each request claims its matching recorded interaction regardless of execution order.
-- [`websocket.example.ts`](./websocket.example.ts) tests an application service that selects multiple WebSocket URLs at runtime.
+- [`github.example.ts`](./github.example.ts) runs three GitHub requests concurrently with random delays, demonstrating that each request claims its matching recorded interaction regardless of execution order.
+- [`websocket.example.ts`](./websocket.example.ts) connects to two chat rooms and exchanges schema-validated JSON messages over each recorded WebSocket.
 
 The examples use only the public `effect-http-recorder` package entrypoint. Run them with:
 
