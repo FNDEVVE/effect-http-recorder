@@ -1,5 +1,11 @@
 # effect-http-recorder
 
+## 0.2.1
+
+### Patch Changes
+
+- f2def1d: Replay each HTTP request from the first unused matching interaction so distinct requests can run out of order or concurrently.
+
 ## 0.2.0
 
 ### Minor Changes
