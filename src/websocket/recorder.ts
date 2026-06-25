@@ -6,7 +6,7 @@ import type { SocketRecorderOptions } from "../options.js"
 import { make, type Redactor } from "../redaction/redactor.js"
 import { canonicalizeJson, decodeJson, safeText } from "../replay/comparison.js"
 import { makeReplayState, resolveAutoMode } from "../replay/state.js"
-import { webSocketInteractions } from "../cassette/model.js"
+import { webSocketInteractions, type Interaction } from "../cassette/model.js"
 import type { WebSocketEvent, WebSocketInteraction } from "./model.js"
 
 interface WebSocketRecorderOptions extends SocketRecorderOptions {
@@ -31,7 +31,72 @@ interface ActiveRecording {
   valid: boolean
 }
 
+interface PendingRecordings {
+  readonly promises: Set<Promise<void>>
+  readonly errors: Array<unknown>
+}
+
 type Frame = string | Uint8Array
+
+const normalizeProtocols = (protocols?: string | Array<string>): Array<string> =>
+  protocols === undefined ? [] : typeof protocols === "string" ? [protocols] : [...protocols]
+
+const frameFromWebSocketData = async (data: unknown): Promise<Frame> => {
+  if (typeof data === "string") return data
+  if (data instanceof Blob) return new Uint8Array(await data.arrayBuffer())
+  if (data instanceof ArrayBuffer) return new Uint8Array(data)
+  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice()
+  throw new Error(`Unsupported WebSocket frame: ${Object.prototype.toString.call(data)}`)
+}
+
+const closeEvent = (code: number, reason: string) =>
+  new globalThis.CloseEvent("close", { code, reason, wasClean: code === 1000 })
+
+const errorEvent = (error: unknown) =>
+  new ErrorEvent("error", {
+    error,
+    message: error instanceof Error ? error.message : String(error),
+  })
+
+const webSocketFacade = (
+  target: EventTarget,
+  properties: {
+    readonly url: () => string
+    readonly readyState: () => number
+    readonly protocol: () => string
+    readonly extensions: () => string
+    readonly bufferedAmount: () => number
+    readonly send: (data: string | ArrayBufferLike | Blob | ArrayBufferView) => void
+    readonly close: (code?: number, reason?: string) => void
+  },
+): globalThis.WebSocket => {
+  Object.defineProperties(target, {
+    url: { get: properties.url },
+    readyState: { get: properties.readyState },
+    protocol: { get: properties.protocol },
+    extensions: { get: properties.extensions },
+    bufferedAmount: { get: properties.bufferedAmount },
+    binaryType: { value: "blob", writable: true },
+    send: { value: properties.send },
+    close: { value: properties.close },
+    CONNECTING: { value: 0 },
+    OPEN: { value: 1 },
+    CLOSING: { value: 2 },
+    CLOSED: { value: 3 },
+  })
+  for (const name of ["open", "message", "error", "close"] as const) {
+    let handler: ((event: Event) => unknown) | null = null
+    Object.defineProperty(target, `on${name}`, {
+      get: () => handler,
+      set: (next) => {
+        if (handler) target.removeEventListener(name, handler)
+        handler = typeof next === "function" ? next : null
+        if (handler) target.addEventListener(name, handler)
+      },
+    })
+  }
+  return target as globalThis.WebSocket
+}
 
 const encodeEvent = (direction: "client" | "server", message: Frame): WebSocketEvent =>
   typeof message === "string"
@@ -314,24 +379,258 @@ const recordingLayer = (
  * Replay releases server frames in order and waits at each recorded client
  * frame until the application writes a matching frame.
  */
-export const socket = (
+export const layerSocket = (
   name: string,
   options: SocketRecorderOptions = {},
 ): Layer.Layer<Socket.Socket, never, Socket.Socket> =>
   provideCassette(recordingLayer(name, { ...options, compareClientMessagesAsJson: true }), options)
 
 /** @internal */
-export const socketLayer = (
+export const layerSocketWithMode = (
   name: string,
   options: WebSocketRecorderOptions & { readonly mode: "record" | "replay" },
 ): Layer.Layer<Socket.Socket, never, Socket.Socket> =>
   provideCassette(recordingLayer(name, options, options.mode), options)
 
-const provideCassette = (
-  layer: Layer.Layer<Socket.Socket, never, Socket.Socket | CassetteService.Service>,
-  options: WebSocketRecorderOptions,
-) =>
+const provideCassette = <A, E, R>(layer: Layer.Layer<A, E, R>, options: WebSocketRecorderOptions) =>
   layer.pipe(
     Layer.provide(CassetteService.fileSystem({ directory: options.directory })),
     Layer.provide(NodeFileSystem.layer),
+  )
+
+const makeRecordingWebSocketConstructor = (
+  upstream: Socket.WebSocketConstructor["Service"],
+  cassette: CassetteService.Interface,
+  name: string,
+  metadata: SocketRecorderOptions["metadata"],
+  redactor: Redactor,
+  pending: PendingRecordings,
+): Socket.WebSocketConstructor["Service"] => {
+  let nextSequence = 0
+  return (url, protocols) => {
+    const sequence = nextSequence++
+    const requestedProtocols = normalizeProtocols(protocols)
+    const native = upstream(url, requestedProtocols)
+    const events: WebSocketEvent[] = []
+    let opened = false
+    let failed = false
+    let closed = false
+    let queue = Promise.resolve()
+
+    const appendEvent = (direction: "client" | "server", data: unknown) => {
+      queue = queue.then(async () => {
+        if (failed || closed) return
+        try {
+          events.push(redactEvent(encodeEvent(direction, await frameFromWebSocketData(data)), redactor))
+        } catch {
+          failed = true
+        }
+      })
+    }
+
+    const onOpen = () => {
+      opened = true
+    }
+    const onMessage = (event: MessageEvent) => {
+      appendEvent("server", event.data)
+    }
+    const onError = () => {
+      failed = true
+    }
+    const onClose = (event: CloseEvent) => {
+      native.removeEventListener("open", onOpen)
+      native.removeEventListener("message", onMessage)
+      native.removeEventListener("error", onError)
+      native.removeEventListener("close", onClose)
+
+      const completion = queue.then(async () => {
+        closed = true
+        if (opened && !failed) {
+          const request = redactor.request({ method: "WEBSOCKET", url, headers: {}, body: "" })
+          const interaction: WebSocketInteraction = {
+            transport: "websocket",
+            connection: {
+              sequence,
+              url: request.url,
+              protocols: requestedProtocols,
+              close: { code: event.code, reason: event.reason },
+            },
+            events: [...events],
+          }
+          events.length = 0
+          await Effect.runPromise(cassette.append(name, interaction, metadata).pipe(Effect.orDie))
+        }
+      })
+      pending.promises.add(completion)
+      void completion.then(
+        () => pending.promises.delete(completion),
+        (error) => {
+          pending.promises.delete(completion)
+          pending.errors.push(error)
+        },
+      )
+    }
+
+    native.addEventListener("open", onOpen)
+    native.addEventListener("message", onMessage)
+    native.addEventListener("error", onError)
+    native.addEventListener("close", onClose)
+
+    return new Proxy(native, {
+      get: (target, property) => {
+        if (property === "send")
+          return (data: string | ArrayBufferLike | Blob | ArrayBufferView) => {
+            target.send(data)
+            appendEvent("client", data)
+          }
+        const value: unknown = Reflect.get(target, property, target)
+        return typeof value === "function" ? value.bind(target) : value
+      },
+      set: (target, property, value) => Reflect.set(target, property, value, target),
+    })
+  }
+}
+
+const constructorWebSocketInteractions = (interactions: ReadonlyArray<Interaction>) =>
+  webSocketInteractions(interactions)
+    .filter((interaction) => interaction.connection !== undefined)
+    .map((interaction, index) => ({ interaction, index }))
+    .toSorted((a, b) => a.interaction.connection!.sequence - b.interaction.connection!.sequence)
+    .map(({ interaction }) => interaction)
+
+const makeReplayWebSocketConstructor = (
+  cassette: CassetteService.Interface,
+  name: string,
+  redactor: Redactor,
+): Effect.Effect<Socket.WebSocketConstructor["Service"], never, Scope.Scope> =>
+  Effect.gen(function* () {
+    const replay = yield* makeReplayState(cassette, name, constructorWebSocketInteractions)
+
+    return (url, protocols) => {
+      const target = new EventTarget()
+      const requestedProtocols = normalizeProtocols(protocols)
+      const request = redactor.request({ method: "WEBSOCKET", url, headers: {}, body: "" })
+      let readyState = 0
+      let interaction: WebSocketInteraction | undefined
+      let position = 0
+      let finished = false
+      let closeRequested = false
+      let operations = Promise.resolve()
+
+      const fail = (error: unknown) => {
+        if (finished) return
+        finished = true
+        readyState = 3
+        target.dispatchEvent(errorEvent(error))
+      }
+
+      const finish = () => {
+        if (finished || !interaction || position !== interaction.events.length) return
+        finished = true
+        readyState = 3
+        const terminal = interaction.connection?.close ?? { code: 1000, reason: "" }
+        target.dispatchEvent(closeEvent(terminal.code, terminal.reason))
+      }
+
+      const drive = () => {
+        if (!interaction || finished) return
+        while (interaction.events[position]?.direction === "server") {
+          const event = interaction.events[position++]
+          if (!event) break
+          target.dispatchEvent(new MessageEvent("message", { data: decodeEvent(event) }))
+        }
+        if (position === interaction.events.length) setTimeout(finish, 0)
+      }
+
+      Effect.runPromise(
+        replay
+          .claim((recorded, index) =>
+            Effect.sync(() => {
+              if (!recorded) throw new Error(`Missing recorded WebSocket connection ${index + 1}`)
+              const connection = recorded.connection
+              if (!connection) throw new Error(`WebSocket interaction ${index + 1} has no connection metadata`)
+              if (connection.url !== request.url)
+                throw new Error(
+                  `WebSocket connection ${index + 1}: expected URL ${safeText(connection.url)}, received ${safeText(request.url)}`,
+                )
+              if (
+                connection.protocols.length !== requestedProtocols.length ||
+                connection.protocols.some((protocol, protocolIndex) => protocol !== requestedProtocols[protocolIndex])
+              )
+                throw new Error(
+                  `WebSocket connection ${index + 1}: expected protocols ${safeText(connection.protocols)}, received ${safeText(requestedProtocols)}`,
+                )
+            }),
+          )
+          .pipe(Effect.orDie),
+      ).then((claimed) => {
+        if (closeRequested) return fail(new Error("WebSocket closed before it opened"))
+        interaction = claimed.interaction
+        readyState = 1
+        target.dispatchEvent(new Event("open"))
+        drive()
+      }, fail)
+
+      return webSocketFacade(target, {
+        url: () => url,
+        readyState: () => readyState,
+        protocol: () => requestedProtocols[0] ?? "",
+        extensions: () => "",
+        bufferedAmount: () => 0,
+        send: (data) => {
+          if (!interaction || readyState !== 1 || closeRequested) throw new Error("WebSocket is not open")
+          operations = operations.then(async () => {
+            try {
+              const frame = await frameFromWebSocketData(data)
+              const actual = redactEvent(encodeEvent("client", frame), redactor)
+              const expected = interaction?.events[position]
+              Effect.runSync(assertEvent(actual, expected, position, true))
+              position += 1
+              drive()
+            } catch (error) {
+              fail(error)
+            }
+          })
+        },
+        close: () => {
+          if (closeRequested || readyState === 3) return
+          closeRequested = true
+          readyState = 2
+          operations = operations.then(() => {
+            if (!interaction) return
+            if (position !== interaction.events.length)
+              return fail(
+                new Error(`WebSocket closed with unconsumed events: used ${position} of ${interaction.events.length}`),
+              )
+            finish()
+          })
+        },
+      })
+    }
+  })
+
+/** Decorates Effect's WebSocket constructor so dynamic connections are recorded and replayed. */
+export const layerWebSocketConstructor = (
+  name: string,
+  options: SocketRecorderOptions = {},
+): Layer.Layer<Socket.WebSocketConstructor, never, Socket.WebSocketConstructor> =>
+  provideCassette(
+    Layer.effect(
+      Socket.WebSocketConstructor,
+      Effect.gen(function* () {
+        const upstream = yield* Socket.WebSocketConstructor
+        const cassette = yield* CassetteService.Service
+        const redactor = make(options.redact)
+        if ((yield* resolveAutoMode(cassette, name)) === "replay")
+          return yield* makeReplayWebSocketConstructor(cassette, name, redactor)
+        const pending: PendingRecordings = { promises: new Set(), errors: [] }
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(() => Promise.all(pending.promises)).pipe(
+            Effect.flatMap(() => (pending.errors.length === 0 ? Effect.void : Effect.die(pending.errors[0]))),
+          ),
+        )
+        return makeRecordingWebSocketConstructor(upstream, cassette, name, options.metadata, redactor, pending)
+      }),
+    ),
+    options,
   )

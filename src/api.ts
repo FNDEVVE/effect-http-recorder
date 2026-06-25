@@ -40,7 +40,7 @@ export interface RecorderOptions {
   readonly match?: RequestMatcher
 }
 
-/** Recorder configuration for a provided Effect WebSocket service. */
+/** Recorder configuration for Effect socket and WebSocket layers. */
 export type SocketRecorderOptions = Omit<RecorderOptions, "match">
 
 export * as Api from "./api.js"

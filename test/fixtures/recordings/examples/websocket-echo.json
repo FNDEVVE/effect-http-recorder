@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "examples/websocket-echo",
+    "recordedAt": "2026-06-25T16:20:34.559Z"
+  },
+  "interactions": [
+    {
+      "transport": "websocket",
+      "connection": {
+        "sequence": 0,
+        "url": "wss://ws.postman-echo.com/raw",
+        "protocols": [],
+        "close": {
+          "code": 1000,
+          "reason": ""
+        }
+      },
+      "events": [
+        {
+          "direction": "client",
+          "kind": "text",
+          "body": "hello alpha"
+        },
+        {
+          "direction": "server",
+          "kind": "text",
+          "body": "hello alpha"
+        }
+      ]
+    },
+    {
+      "transport": "websocket",
+      "connection": {
+        "sequence": 1,
+        "url": "wss://ws.postman-echo.com/raw/",
+        "protocols": [],
+        "close": {
+          "code": 1000,
+          "reason": ""
+        }
+      },
+      "events": [
+        {
+          "direction": "client",
+          "kind": "text",
+          "body": "hello beta"
+        },
+        {
+          "direction": "server",
+          "kind": "text",
+          "body": "hello beta"
+        }
+      ]
+    }
+  ]
+}

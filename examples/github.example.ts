@@ -37,5 +37,5 @@ it.effect("loads an Effect repository through the GitHub service", () =>
     assert.strictEqual(repository.name, "effect")
     assert.strictEqual(repository.full_name, "Effect-TS/effect")
     assert.strictEqual(repository.owner.login, "Effect-TS")
-  }).pipe(Effect.provide(GitHubLive.pipe(Layer.provide(HttpRecorder.http("examples/github-effect-repository"))))),
+  }).pipe(Effect.provide(GitHubLive.pipe(Layer.provide(HttpRecorder.layer("examples/github-effect-repository"))))),
 )

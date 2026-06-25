@@ -1,18 +1,22 @@
+import { Layer } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import { Socket } from "effect/unstable/socket"
-import { Layer } from "effect"
 import { Api } from "./api.js"
-import { http } from "./http/recorder.js"
-import { socket } from "./websocket/recorder.js"
+import { layer } from "./http/recorder.js"
+import { layerSocket, layerWebSocketConstructor } from "./websocket/recorder.js"
 
 /** HTTP and WebSocket cassette recording. */
 export const HttpRecorder: {
-  readonly http: (name: string, options?: Api.RecorderOptions) => Layer.Layer<HttpClient.HttpClient>
-  readonly socket: (
+  readonly layer: (name: string, options?: Api.RecorderOptions) => Layer.Layer<HttpClient.HttpClient>
+  readonly layerSocket: (
     name: string,
     options?: Api.SocketRecorderOptions,
   ) => Layer.Layer<Socket.Socket, never, Socket.Socket>
-} = { http, socket }
+  readonly layerWebSocketConstructor: (
+    name: string,
+    options?: Api.SocketRecorderOptions,
+  ) => Layer.Layer<Socket.WebSocketConstructor, never, Socket.WebSocketConstructor>
+} = { layer, layerSocket, layerWebSocketConstructor }
 
 export namespace HttpRecorder {
   /** Additional JSON metadata stored with a cassette. */
@@ -27,6 +31,6 @@ export namespace HttpRecorder {
   export type RequestMatcher = Api.RequestMatcher
   /** The normalized HTTP request representation used for matching. */
   export type RequestSnapshot = Api.RequestSnapshot
-  /** Recorder configuration for a provided Effect WebSocket service. */
+  /** Recorder configuration for Effect socket and WebSocket layers. */
   export type SocketRecorderOptions = Api.SocketRecorderOptions
 }

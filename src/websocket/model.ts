@@ -18,6 +18,17 @@ export type WebSocketEvent = Schema.Schema.Type<typeof WebSocketEventSchema>
 
 export const WebSocketInteractionSchema = Schema.Struct({
   transport: Schema.tag("websocket"),
+  connection: Schema.optional(
+    Schema.Struct({
+      sequence: Schema.Number,
+      url: Schema.String,
+      protocols: Schema.Array(Schema.String),
+      close: Schema.Struct({
+        code: Schema.Number,
+        reason: Schema.String,
+      }),
+    }),
+  ),
   events: Schema.Array(WebSocketEventSchema),
 })
 

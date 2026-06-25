@@ -51,7 +51,7 @@ describe("getUser", () => {
 
       assert.strictEqual(user.id, 1)
       assert.strictEqual(user.name, "Leanne Graham")
-    }).pipe(Effect.provide(HttpRecorder.http("users/get-one"))),
+    }).pipe(Effect.provide(HttpRecorder.layer("users/get-one"))),
   )
 })
 ```
@@ -81,56 +81,57 @@ Application code does not need to know whether a response is live or replayed.
 ## API
 
 ```ts
-HttpRecorder.http(name, options?)
-HttpRecorder.socket(name, options?)
+HttpRecorder.layer(name, options?)
+HttpRecorder.layerSocket(name, options?)
+HttpRecorder.layerWebSocketConstructor(name, options?)
 ```
 
-That is the complete runtime API. `http` provides a fetch-backed recorded `HttpClient`. `socket` decorates a standard Effect `Socket.Socket` supplied beneath it.
+That is the complete runtime API. `layer` provides a fetch-backed recorded `HttpClient`. `layerWebSocketConstructor` decorates Effect's `Socket.WebSocketConstructor`, recording every dynamically selected URL and protocol. `layerSocket` is the lower-level transport-neutral decorator for an application-provided `Socket.Socket`.
 
 The `HttpRecorder` namespace also exposes the configuration types `RecorderOptions`, `SocketRecorderOptions`, `RedactOptions`, `RequestMatcher`, `RequestSnapshot`, and `CassetteMetadata`.
 
 ## WebSockets
 
-Effect models a WebSocket as a `Socket.Socket` service. A program obtains a scoped `writer` for outgoing frames and runs one receive loop for the lifetime of a connection. The application supplies the live URL-bound socket; the recorder decorates that service without owning its URL, protocols, authentication, timeout, or close policy.
-
-The cassette name is the connection identity during replay. Replay does not validate the live URL or handshake configuration.
+Real applications often select WebSocket URLs inside domain services. Effect represents that capability with `Socket.WebSocketConstructor`; production supplies the platform implementation, while tests can decorate it without changing application code.
 
 ```ts
-import { it } from "@effect/vitest"
 import { NodeSocket } from "@effect/platform-node"
-import { Effect, Layer } from "effect"
+import { it } from "@effect/vitest"
+import { Deferred, Effect, Layer } from "effect"
 import { Socket } from "effect/unstable/socket"
 import { HttpRecorder } from "effect-http-recorder"
 
-const conversation = Effect.gen(function* () {
-  const socket = yield* Socket.Socket
+const roundTrip = Effect.fn("Echo.roundTrip")(function* (url: string, message: string) {
+  const socket = yield* Socket.makeWebSocket(url, { closeCodeIsError: () => false })
   const write = yield* socket.writer
+  const echoed = yield* Deferred.make<string>()
 
-  yield* socket.runString((message) =>
-    Effect.gen(function* () {
-      const event: unknown = JSON.parse(message)
-
-      if (typeof event !== "object" || event === null || !("type" in event)) return
-      if (event.type === "session.created") {
-        yield* write(JSON.stringify({ type: "response.create", prompt: "hello" }))
-      }
-      if (event.type === "response.completed") {
-        yield* write(new Socket.CloseEvent(1000, "done"))
-      }
-    }),
+  yield* socket.runString(
+    (response) => {
+      return Deferred.succeed(echoed, response).pipe(
+        Effect.andThen(write(new Socket.CloseEvent(1000, "done"))),
+        Effect.orDie,
+      )
+    },
+    { onOpen: write(message).pipe(Effect.orDie) },
   )
+
+  return yield* Deferred.await(echoed)
 })
 
-const recordedSocket = HttpRecorder.socket("provider/conversation").pipe(
-  Layer.provide(
-    NodeSocket.layerWebSocket("wss://provider.example/realtime", {
-      closeCodeIsError: (code) => code !== 1000,
-    }),
+it.effect("round trips a message", () =>
+  roundTrip("wss://ws.postman-echo.com/raw", "hello").pipe(
+    Effect.scoped,
+    Effect.provide(
+      HttpRecorder.layerWebSocketConstructor("echo/round-trip").pipe(
+        Layer.provide(NodeSocket.layerWebSocketConstructor),
+      ),
+    ),
   ),
 )
-
-it.effect("completes a provider conversation", () => conversation.pipe(Effect.scoped, Effect.provide(recordedSocket)))
 ```
+
+The production application supplies only `NodeSocket.layerWebSocketConstructor`. The recorder appears in test wiring and observes each call to `Socket.makeWebSocket`, including URLs selected at runtime.
 
 `socket.runString` owns the receive loop and finishes when the connection closes or fails. Its optional `onOpen` effect is the safe place to send protocols whose client speaks first. The writer is scoped because sending is valid only while a connection run is active.
 
@@ -140,9 +141,9 @@ Client text frames containing JSON compare canonically, so object-key order does
 
 Incoming frame handlers start in recorded order and may run concurrently, matching Effect's socket abstraction. Replay waits for all handlers before the socket run completes, but handler completion order is not guaranteed. Use Effect synchronization such as `Queue`, `Ref`, or `Deferred` instead of unsynchronized mutable state.
 
-A cassette is written only after the live socket opened and its run completed successfully. Failed, interrupted, unopened, or invalid runs do not produce a recording. During replay, closing before every recorded frame is consumed fails the test.
+A constructor cassette records the URL, requested protocols, frames, and terminal close for each connection. Replay validates the URL and protocols before opening the simulated socket. Closing before every recorded frame is consumed fails the test.
 
-The application owns the WebSocket URL and protocols through normal Effect layer wiring. Provide separate recorder and live socket layers for separate endpoints or concurrent connections. One recorder layer supports sequential reconnects, but rejects concurrent runs.
+Use `layerSocket` when a protocol layer already consumes one application-provided `Socket.Socket`, including non-WebSocket transports. Because that lower-level abstraction has no URL or protocols, its cassettes use the cassette name and connection order as identity.
 
 Text frames use the same JSON-field and body redaction as HTTP bodies. Binary frames are stored losslessly as base64. Client and server frame kinds must match during replay.
 
@@ -162,7 +163,7 @@ There is intentionally no public overwrite mode. Deletion makes the set of recor
 Secure defaults remove most headers and redact common credentials in headers, URLs, and JSON bodies. Extend those defaults at layer construction:
 
 ```ts
-HttpRecorder.http("anthropic/messages", {
+HttpRecorder.layer("anthropic/messages", {
   redact: {
     headers: ["x-project-token"],
     allowRequestHeaders: ["anthropic-version"],
@@ -199,7 +200,7 @@ Concurrent requests are recorded in request-start order even when their response
 Supply a custom equivalence rule when a request contains intentionally volatile data:
 
 ```ts
-HttpRecorder.http("events/create", {
+HttpRecorder.layer("events/create", {
   match: (incoming, recorded) =>
     incoming.method === recorded.method && new URL(incoming.url).pathname === new URL(recorded.url).pathname,
 })
@@ -230,7 +231,8 @@ Cassettes are readable JSON files intended to be committed with your tests. HTTP
 
 - Responses are buffered while recording and replaying, so this beta is not suitable for tests that assert streaming timing, cancellation, or backpressure.
 - WebSocket replay preserves frame chronology and content, not real network timing or backpressure.
-- WebSocket V1 cassettes do not reproduce terminal close codes, close reasons, handshake configuration, or transport failures. Failed and interrupted live runs are not recorded.
+- Constructor-level WebSocket cassettes reproduce terminal close codes and reasons, but not selected subprotocols, handshake headers, transport timing, or transport failures. Lower-level `layerSocket` cassettes contain frames only.
+- Failed and interrupted live WebSocket connections are not recorded.
 - WebSocket transcripts are retained in memory until the connection finishes; avoid using this beta for unbounded sessions.
 - The package currently requires the exact Effect beta listed above.
 - Cassette format version `1` has no migration tooling yet.

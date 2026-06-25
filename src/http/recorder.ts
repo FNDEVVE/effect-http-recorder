@@ -201,7 +201,7 @@ export const cassetteLayer = (name: string, options: RecordReplayOptions = {}): 
  * Locally, a missing cassette is recorded from the real service. Existing
  * cassettes are replayed, and `CI=true` makes a missing cassette fail.
  */
-export const http = (name: string, options: RecorderOptions = {}): Layer.Layer<HttpClient.HttpClient> =>
+export const layer = (name: string, options: RecorderOptions = {}): Layer.Layer<HttpClient.HttpClient> =>
   cassetteLayer(name, {
     directory: options.directory,
     metadata: options.metadata,

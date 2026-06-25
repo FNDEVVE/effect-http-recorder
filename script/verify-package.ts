@@ -69,12 +69,15 @@ import { Socket } from "effect/unstable/socket"
 
 const options: HttpRecorder.RecorderOptions = { match: () => true, redact: { jsonFields: ["access_token"] } }
 const socketOptions: HttpRecorder.SocketRecorderOptions = { redact: { jsonFields: ["access_token"] } }
-HttpRecorder.http("consumer", options) satisfies Layer.Layer<HttpClient.HttpClient>
-HttpRecorder.socket("consumer/socket", socketOptions).pipe(
+HttpRecorder.layer("consumer", options) satisfies Layer.Layer<HttpClient.HttpClient>
+HttpRecorder.layerSocket("consumer/socket", socketOptions).pipe(
   Layer.provide(NodeSocket.layerWebSocket("wss://example.test")),
 ) satisfies Layer.Layer<Socket.Socket>
+HttpRecorder.layerWebSocketConstructor("consumer/websocket", socketOptions).pipe(
+  Layer.provide(NodeSocket.layerWebSocketConstructor),
+) satisfies Layer.Layer<Socket.WebSocketConstructor>
 // @ts-expect-error HTTP request matching does not apply to WebSocket frames.
-HttpRecorder.socket("consumer/socket", { match: () => true })
+HttpRecorder.layerSocket("consumer/socket", { match: () => true })
 `,
     )
     await writeFile(
@@ -82,7 +85,7 @@ HttpRecorder.socket("consumer/socket", { match: () => true })
       `import { HttpRecorder } from ${JSON.stringify(pkg.name)}
 
 const namespace = Object.keys(HttpRecorder).sort()
-if (JSON.stringify(namespace) !== JSON.stringify(["http", "socket"])) {
+if (JSON.stringify(namespace) !== JSON.stringify(["layer", "layerSocket", "layerWebSocketConstructor"])) {
   throw new Error(\`Unexpected HttpRecorder exports: \${namespace}\`)
 }
 `,

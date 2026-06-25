@@ -3,7 +3,7 @@ import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { Socket } from "effect/unstable/socket"
 import { existsSync } from "node:fs"
 import { HttpRecorder } from "../src"
-import { socketLayer } from "../src/websocket/recorder"
+import { layerSocketWithMode } from "../src/websocket/recorder"
 import { failureText, readCassette, seedCassetteDirectory, tempDirectory } from "./support"
 
 const unavailableSocket = Socket.make({
@@ -11,7 +11,154 @@ const unavailableSocket = Socket.make({
   writer: Effect.succeed(() => Effect.die(new Error("unexpected live WebSocket write"))),
 })
 
+class EchoWebSocket extends EventTarget {
+  readonly protocol = ""
+  readonly extensions = ""
+  bufferedAmount = 0
+  binaryType: BinaryType = "blob"
+  readyState = 0
+
+  constructor(readonly url: string) {
+    super()
+    queueMicrotask(() => {
+      this.readyState = 1
+      this.dispatchEvent(new Event("open"))
+    })
+  }
+
+  send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+    queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data })))
+  }
+
+  close(code = 1000, reason = "") {
+    if (this.readyState === 3) return
+    this.readyState = 3
+    this.dispatchEvent(new CloseEvent("close", { code, reason, wasClean: code === 1000 }))
+  }
+}
+
 describe("WebSocket", () => {
+  test("constructor recording is complete when the recorder layer closes", async () => {
+    using directory = tempDirectory("http-recorder-websocket-constructor-")
+    const recorder = HttpRecorder.layerWebSocketConstructor("websocket/constructor-record", {
+      directory: directory.path,
+    }).pipe(
+      Layer.provide(
+        Layer.succeed(Socket.WebSocketConstructor, (url) => new EchoWebSocket(url) as unknown as globalThis.WebSocket),
+      ),
+    )
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const socket = yield* Socket.makeWebSocket("wss://echo.example.test/one", {
+          protocols: ["echo.v1"],
+          closeCodeIsError: () => false,
+        })
+        const write = yield* socket.writer
+        yield* socket.runString(() => write(new Socket.CloseEvent(1000, "complete")).pipe(Effect.orDie), {
+          onOpen: write("hello").pipe(Effect.orDie),
+        })
+      }).pipe(Effect.scoped, Effect.provide(recorder)),
+    )
+
+    expect(readCassette(`${directory.path}/websocket/constructor-record.json`).interactions).toEqual([
+      {
+        transport: "websocket",
+        connection: {
+          sequence: 0,
+          url: "wss://echo.example.test/one",
+          protocols: ["echo.v1"],
+          close: { code: 1000, reason: "complete" },
+        },
+        events: [
+          { direction: "client", kind: "text", body: "hello" },
+          { direction: "server", kind: "text", body: "hello" },
+        ],
+      },
+    ])
+  })
+
+  test("constructor replay validates dynamic URLs and protocols without opening a live socket", async () => {
+    using directory = tempDirectory("http-recorder-websocket-constructor-")
+    await seedCassetteDirectory(directory.path, "websocket/constructor", [
+      {
+        transport: "websocket",
+        connection: {
+          sequence: 0,
+          url: "wss://events.example.test/workspaces/one",
+          protocols: ["events.v1"],
+          close: { code: 1000, reason: "complete" },
+        },
+        events: [
+          { direction: "client", kind: "text", body: '{"type":"subscribe"}' },
+          { direction: "server", kind: "text", body: '{"type":"ready"}' },
+        ],
+      },
+    ])
+    const unavailableConstructor = () => {
+      throw new Error("unexpected live WebSocket construction")
+    }
+    const recorder = HttpRecorder.layerWebSocketConstructor("websocket/constructor", {
+      directory: directory.path,
+    }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, unavailableConstructor)))
+
+    const received = await Effect.runPromise(
+      Effect.gen(function* () {
+        const socket = yield* Socket.makeWebSocket("wss://events.example.test/workspaces/one", {
+          protocols: ["events.v1"],
+          closeCodeIsError: () => false,
+        })
+        const write = yield* socket.writer
+        const received: string[] = []
+        yield* socket.runString(
+          (message) => {
+            received.push(message)
+          },
+          {
+            onOpen: write('{"type":"subscribe"}').pipe(Effect.orDie),
+          },
+        )
+        return received
+      }).pipe(Effect.scoped, Effect.provide(recorder)),
+    )
+
+    expect(received).toEqual(['{"type":"ready"}'])
+  })
+
+  test("constructor replay rejects a different dynamic URL", async () => {
+    using directory = tempDirectory("http-recorder-websocket-constructor-")
+    await seedCassetteDirectory(directory.path, "websocket/constructor-mismatch", [
+      {
+        transport: "websocket",
+        connection: {
+          sequence: 0,
+          url: "wss://events.example.test/workspaces/one",
+          protocols: [],
+          close: { code: 1000, reason: "complete" },
+        },
+        events: [],
+      },
+    ])
+    const recorder = HttpRecorder.layerWebSocketConstructor("websocket/constructor-mismatch", {
+      directory: directory.path,
+    }).pipe(
+      Layer.provide(
+        Layer.succeed(Socket.WebSocketConstructor, () => {
+          throw new Error("unexpected live WebSocket construction")
+        }),
+      ),
+    )
+
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        const socket = yield* Socket.makeWebSocket("wss://events.example.test/workspaces/two")
+        yield* socket.runString(() => {})
+      }).pipe(Effect.scoped, Effect.exit, Effect.provide(recorder)),
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+  })
+
   test("records WebSocket frames in observed client/server order", async () => {
     using directory = tempDirectory("http-recorder-websocket-")
     const response = JSON.stringify({
@@ -38,7 +185,7 @@ describe("WebSocket", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          socketLayer("websocket/record", {
+          layerSocketWithMode("websocket/record", {
             directory: directory.path,
             metadata: { provider: "test" },
             mode: "record",
@@ -110,7 +257,7 @@ describe("WebSocket", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          socketLayer("websocket/replay", {
+          layerSocketWithMode("websocket/replay", {
             directory: directory.path,
             compareClientMessagesAsJson: true,
             mode: "replay",
@@ -181,7 +328,7 @@ describe("WebSocket", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          HttpRecorder.socket("websocket/public-layer", { directory: directory.path }).pipe(
+          HttpRecorder.layerSocket("websocket/public-layer", { directory: directory.path }).pipe(
             Layer.provide(Layer.succeed(Socket.Socket, unavailableSocket)),
           ),
         ),
@@ -217,7 +364,7 @@ describe("WebSocket", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          socketLayer("websocket/concurrent-handlers", { directory: directory.path, mode: "replay" }).pipe(
+          layerSocketWithMode("websocket/concurrent-handlers", { directory: directory.path, mode: "replay" }).pipe(
             Layer.provide(Layer.succeed(Socket.Socket, unavailableSocket)),
           ),
         ),
@@ -258,7 +405,7 @@ describe("WebSocket", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          socketLayer("websocket/concurrent-runs", { directory: directory.path, mode: "replay" }).pipe(
+          layerSocketWithMode("websocket/concurrent-runs", { directory: directory.path, mode: "replay" }).pipe(
             Layer.provide(Layer.succeed(Socket.Socket, unavailableSocket)),
           ),
         ),
@@ -289,7 +436,7 @@ describe("WebSocket", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          socketLayer("websocket/early-close", { directory: directory.path, mode: "replay" }).pipe(
+          layerSocketWithMode("websocket/early-close", { directory: directory.path, mode: "replay" }).pipe(
             Layer.provide(Layer.succeed(Socket.Socket, unavailableSocket)),
           ),
         ),
@@ -308,7 +455,7 @@ describe("WebSocket", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          socketLayer("websocket/failed-run", { directory: directory.path, mode: "record" }).pipe(
+          layerSocketWithMode("websocket/failed-run", { directory: directory.path, mode: "record" }).pipe(
             Layer.provide(
               Layer.succeed(
                 Socket.Socket,
@@ -365,7 +512,7 @@ describe("WebSocket", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          socketLayer("websocket/binary", { directory: directory.path, mode: "replay" }).pipe(
+          layerSocketWithMode("websocket/binary", { directory: directory.path, mode: "replay" }).pipe(
             Layer.provide(Layer.succeed(Socket.Socket, unavailableSocket)),
           ),
         ),
