@@ -4,7 +4,7 @@ import { Socket } from "effect/unstable/socket"
 import { existsSync } from "node:fs"
 import { HttpRecorder } from "../src"
 import { layerSocketWithMode } from "../src/websocket/recorder"
-import { failureText, readCassette, seedCassetteDirectory, tempDirectory } from "./support"
+import { failureText, readCassette, seedCassetteDirectory, tempDirectory, withEnvironment } from "./support"
 
 const unavailableSocket = Socket.make({
   runRaw: () => Effect.die(new Error("unexpected live WebSocket run")),
@@ -48,17 +48,19 @@ describe("WebSocket", () => {
       ),
     )
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const socket = yield* Socket.makeWebSocket("wss://echo.example.test/one", {
-          protocols: ["echo.v1"],
-          closeCodeIsError: () => false,
-        })
-        const write = yield* socket.writer
-        yield* socket.runString(() => write(new Socket.CloseEvent(1000, "complete")).pipe(Effect.orDie), {
-          onOpen: write("hello").pipe(Effect.orDie),
-        })
-      }).pipe(Effect.scoped, Effect.provide(recorder)),
+    await withEnvironment("CI", undefined, () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const socket = yield* Socket.makeWebSocket("wss://echo.example.test/one", {
+            protocols: ["echo.v1"],
+            closeCodeIsError: () => false,
+          })
+          const write = yield* socket.writer
+          yield* socket.runString(() => write(new Socket.CloseEvent(1000, "complete")).pipe(Effect.orDie), {
+            onOpen: write("hello").pipe(Effect.orDie),
+          })
+        }).pipe(Effect.scoped, Effect.provide(recorder)),
+      ),
     )
 
     expect(readCassette(`${directory.path}/websocket/constructor-record.json`).interactions).toEqual([
