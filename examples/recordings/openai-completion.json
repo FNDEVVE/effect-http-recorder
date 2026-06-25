@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "openai-completion",
+    "recordedAt": "2026-06-25T19:35:28.082Z"
+  },
+  "interactions": [
+    {
+      "transport": "http",
+      "request": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"model\":\"gpt-4.1-nano\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly: cassettes make tests fast\"}],\"temperature\":0,\"max_completion_tokens\":20}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"id\":\"chatcmpl-Duk99azPKugEN3BbappKSDbPM0TG4\",\"object\":\"chat.completion\",\"created\":1782416127,\"model\":\"gpt-4.1-nano-2025-04-14\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"cassettes make tests fast\",\"refusal\":null,\"annotations\":[]},\"logprobs\":null,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":17,\"completion_tokens\":6,\"total_tokens\":23,\"prompt_tokens_details\":{\"cached_tokens\":0,\"audio_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"audio_tokens\":0,\"accepted_prediction_tokens\":0,\"rejected_prediction_tokens\":0}},\"service_tier\":\"default\",\"system_fingerprint\":\"fp_555cf3631c\"}"
+      }
+    }
+  ]
+}
