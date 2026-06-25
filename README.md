@@ -191,11 +191,11 @@ Redaction is defense in depth, not a substitute for review. Inspect cassette dif
 
 ## Matching And Ordering
 
-A cassette contains an ordered sequence of interactions. The first runtime request is checked against the first recorded request, the second against the second, and so on.
+A runtime request atomically claims the first unused recorded interaction that matches it. Distinct requests may replay in any order or concurrently.
 
-This strict ordering correctly models repeated identical requests whose responses change, including retries, polling, and cache tests. JSON object keys are canonicalized before matching.
+Repeated identical requests consume their matching responses in cassette order, which models retries, polling, and cache tests deterministically. A mismatch consumes nothing, and JSON object keys are canonicalized before matching.
 
-Concurrent requests are recorded in request-start order even when their responses complete out of order.
+Concurrent requests are recorded in request-start order even when their responses complete out of order. Each recorded interaction can be claimed only once, and leaving interactions unused fails when the recorder layer closes.
 
 Supply a custom equivalence rule when a request contains intentionally volatile data:
 

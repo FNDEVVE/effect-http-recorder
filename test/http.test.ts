@@ -27,7 +27,7 @@ describe("HTTP", () => {
     )
   })
 
-  test("replay reports cursor exhaustion when more requests are made than recorded", async () => {
+  test("replay reports exhaustion when more requests are made than recorded", async () => {
     await run(
       Effect.gen(function* () {
         yield* post("https://example.test/echo", { step: 1 })
@@ -38,7 +38,7 @@ describe("HTTP", () => {
     )
   })
 
-  test("replay validates each recorded request in order", async () => {
+  test("a mismatch does not consume an interaction", async () => {
     await run(
       Effect.gen(function* () {
         yield* post("https://example.test/echo", { step: 1 })
@@ -48,6 +48,25 @@ describe("HTTP", () => {
         expect(yield* post("https://example.test/echo", { step: 2 })).toBe('{"reply":"second"}')
       }),
     )
+  })
+
+  test("distinct requests replay in any order", async () => {
+    await run(
+      Effect.gen(function* () {
+        expect(yield* post("https://example.test/echo", { step: 2 })).toBe('{"reply":"second"}')
+        expect(yield* post("https://example.test/echo", { step: 1 })).toBe('{"reply":"first"}')
+      }),
+    )
+  })
+
+  test("concurrent distinct requests atomically claim their matching interactions", async () => {
+    const results = await run(
+      Effect.all([post("https://example.test/echo", { step: 2 }), post("https://example.test/echo", { step: 1 })], {
+        concurrency: "unbounded",
+      }),
+    )
+
+    expect(results).toEqual(['{"reply":"second"}', '{"reply":"first"}'])
   })
 
   test("concurrent replay claims each interaction once", async () => {

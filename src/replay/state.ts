@@ -26,6 +26,15 @@ export interface ReplayState<T> {
   >
 }
 
+export interface ReplayPoolState<T> {
+  readonly claim: <E>(
+    select: (interactions: ReadonlyArray<T>, used: ReadonlySet<number>) => Effect.Effect<number, E>,
+  ) => Effect.Effect<
+    { readonly interaction: T; readonly index: number },
+    CassetteNotFoundError | InvalidCassetteError | E
+  >
+}
+
 export const makeReplayState = <T>(
   cassette: CassetteService.Interface,
   name: string,
@@ -58,6 +67,44 @@ export const makeReplayState = <T>(
               if (interaction === undefined)
                 return yield* Effect.die("Replay validation accepted a missing interaction")
               return [{ interaction, index }, index + 1] as const
+            }),
+          ),
+        ),
+    }
+  })
+
+export const makeReplayPoolState = <T>(
+  cassette: CassetteService.Interface,
+  name: string,
+  project: (interactions: ReadonlyArray<Interaction>) => ReadonlyArray<T>,
+): Effect.Effect<ReplayPoolState<T>, never, Scope.Scope> =>
+  Effect.gen(function* () {
+    const load = yield* Effect.cached(cassette.read(name).pipe(Effect.map(project)))
+    const claimed = yield* SynchronizedRef.make<ReadonlySet<number>>(new Set())
+
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        const used = yield* SynchronizedRef.get(claimed)
+        if (used.size === 0) return yield* Effect.void
+        const interactions = yield* load.pipe(Effect.orDie)
+        if (used.size < interactions.length)
+          return yield* Effect.die(
+            new Error(`Unused recorded interactions in ${name}: used ${used.size} of ${interactions.length}`),
+          )
+        return yield* Effect.void
+      }),
+    )
+
+    return {
+      claim: (select) =>
+        Effect.flatMap(load, (interactions) =>
+          SynchronizedRef.modifyEffect(claimed, (used) =>
+            Effect.gen(function* () {
+              const index = yield* select(interactions, used)
+              const interaction = interactions[index]
+              if (interaction === undefined || used.has(index))
+                return yield* Effect.die("Replay selected an unavailable interaction")
+              return [{ interaction, index }, new Set([...used, index])] as const
             }),
           ),
         ),

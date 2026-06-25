@@ -65,27 +65,31 @@ export const requestDiff = (expected: RequestSnapshot, received: RequestSnapshot
   return lines
 }
 
-export const selectSequential = (
+export const selectFirstMatching = (
   interactions: ReadonlyArray<HttpInteraction>,
   incoming: RequestSnapshot,
   match: RequestMatcher,
-  index: number,
+  used: ReadonlySet<number>,
 ): {
   readonly interaction: HttpInteraction | undefined
+  readonly index: number
   readonly detail: string
 } => {
-  const interaction = interactions[index]
-  if (!interaction)
-    return {
-      interaction,
-      detail: `interaction ${index + 1} of ${interactions.length} not recorded`,
-    }
-  if (!match(incoming, interaction.request))
+  const index = interactions.findIndex((interaction, index) => !used.has(index) && match(incoming, interaction.request))
+  if (index !== -1) return { interaction: interactions[index], index, detail: "" }
+
+  const firstUnused = interactions.findIndex((_, index) => !used.has(index))
+  if (firstUnused === -1)
     return {
       interaction: undefined,
-      detail: requestDiff(interaction.request, incoming).join("\n"),
+      index: -1,
+      detail: `all ${interactions.length} recorded interactions have already been consumed`,
     }
-  return { interaction, detail: "" }
+  return {
+    interaction: undefined,
+    index: -1,
+    detail: requestDiff(interactions[firstUnused]!.request, incoming).join("\n"),
+  }
 }
 
 export * as HttpMatching from "./matching.js"

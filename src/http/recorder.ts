@@ -13,9 +13,9 @@ import {
 import * as CassetteService from "../cassette/store.js"
 import type { RecorderOptions } from "../options.js"
 import { make, redactUrl, type Redactor } from "../redaction/redactor.js"
-import { makeReplayState, resolveAutoMode } from "../replay/state.js"
+import { makeReplayPoolState, resolveAutoMode } from "../replay/state.js"
 import { httpInteractions } from "../cassette/model.js"
-import { defaultMatcher, selectSequential, type RequestMatcher } from "./matching.js"
+import { defaultMatcher, selectFirstMatching, type RequestMatcher } from "./matching.js"
 import type { HttpInteraction, ResponseSnapshot } from "./model.js"
 import type { CassetteMetadata } from "../cassette/model.js"
 
@@ -160,14 +160,14 @@ export const recordingLayer = (
         )
       }
 
-      const replay = yield* makeReplayState(cassetteService, name, httpInteractions)
+      const replay = yield* makeReplayPoolState(cassetteService, name, httpInteractions)
       return HttpClient.make((request) =>
         Effect.gen(function* () {
           const incoming = yield* snapshotRequest(request)
           const claimed = yield* replay
-            .claim((interaction, index, interactions) => {
-              const result = selectSequential(interactions, incoming, match, index)
-              if (result.interaction) return Effect.void
+            .claim((interactions, used) => {
+              const result = selectFirstMatching(interactions, incoming, match, used)
+              if (result.interaction) return Effect.succeed(result.index)
               return Effect.fail(
                 transportError(request, `Fixture "${name}" does not match the current request: ${result.detail}.`),
               )

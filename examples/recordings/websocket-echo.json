@@ -1,8 +1,8 @@
 {
   "version": 1,
   "metadata": {
-    "name": "examples/websocket-echo",
-    "recordedAt": "2026-06-25T16:20:34.559Z"
+    "name": "websocket-echo",
+    "recordedAt": "2026-06-25T16:54:57.108Z"
   },
   "interactions": [
     {
