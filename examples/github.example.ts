@@ -48,8 +48,12 @@ it.live(
           return yield* github.getRepository(owner, name)
         })
 
-      const [effect, typescript] = yield* Effect.all(
-        [getRepository("Effect-TS", "effect"), getRepository("microsoft", "TypeScript")],
+      const [effect, typescript, bun] = yield* Effect.all(
+        [
+          getRepository("Effect-TS", "effect"),
+          getRepository("microsoft", "TypeScript"),
+          getRepository("oven-sh", "bun"),
+        ],
         { concurrency: "unbounded" },
       )
 
@@ -60,6 +64,10 @@ it.live(
       assert.strictEqual(typescript.name, "TypeScript")
       assert.strictEqual(typescript.full_name, "microsoft/TypeScript")
       assert.strictEqual(typescript.owner.login, "microsoft")
+
+      assert.strictEqual(bun.name, "bun")
+      assert.strictEqual(bun.full_name, "oven-sh/bun")
+      assert.strictEqual(bun.owner.login, "oven-sh")
     }).pipe(
       Effect.provide(
         GitHub.layer.pipe(

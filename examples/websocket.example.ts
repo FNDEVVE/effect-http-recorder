@@ -8,25 +8,26 @@ class EchoService extends Context.Service<EchoService>()("example/EchoService", 
   make: Effect.gen(function* () {
     const constructor = yield* Socket.WebSocketConstructor
 
-    const roundTrip = Effect.fn("EchoService.roundTrip")(function* (url: string, message: string) {
-      const socket = yield* Socket.makeWebSocket(url, { closeCodeIsError: () => false }).pipe(
-        Effect.provideService(Socket.WebSocketConstructor, constructor),
-      )
-      const write = yield* socket.writer
-      const echoed = yield* Deferred.make<string>()
+    const roundTrip = Effect.fn("EchoService.roundTrip")(
+      function* (url: string, message: string) {
+        const socket = yield* Socket.makeWebSocket(url, { closeCodeIsError: () => false })
+        const write = yield* socket.writer
+        const echoed = yield* Deferred.make<string>()
 
-      yield* socket.runString(
-        (response) =>
-          Effect.gen(function* () {
-            if (response !== message) return
-            yield* Deferred.succeed(echoed, response)
-            yield* write(new Socket.CloseEvent(1000, "received echo")).pipe(Effect.orDie)
-          }),
-        { onOpen: write(message).pipe(Effect.orDie) },
-      )
+        yield* socket.runString(
+          (response) =>
+            Effect.gen(function* () {
+              if (response !== message) return
+              yield* Deferred.succeed(echoed, response)
+              yield* write(new Socket.CloseEvent(1000, "received echo")).pipe(Effect.orDie)
+            }),
+          { onOpen: write(message).pipe(Effect.orDie) },
+        )
 
-      return yield* Deferred.await(echoed)
-    })
+        return yield* Deferred.await(echoed)
+      },
+      Effect.provideService(Socket.WebSocketConstructor, constructor),
+    )
 
     return { roundTrip } as const
   }),
