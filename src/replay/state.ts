@@ -1,4 +1,4 @@
-import { Effect, Scope, SynchronizedRef } from "effect"
+import { Effect, HashSet, Scope, SynchronizedRef } from "effect"
 import type { Interaction } from "../cassette/model.js"
 import type * as CassetteService from "../cassette/store.js"
 import type { CassetteNotFoundError, InvalidCassetteError } from "../cassette/store.js"
@@ -28,50 +28,12 @@ export interface ReplayState<T> {
 
 export interface ReplayPoolState<T> {
   readonly claim: <E>(
-    select: (interactions: ReadonlyArray<T>, used: ReadonlySet<number>) => Effect.Effect<number, E>,
+    select: (interactions: ReadonlyArray<T>, used: HashSet.HashSet<number>) => Effect.Effect<number, E>,
   ) => Effect.Effect<
     { readonly interaction: T; readonly index: number },
     CassetteNotFoundError | InvalidCassetteError | E
   >
 }
-
-export const makeReplayState = <T>(
-  cassette: CassetteService.Interface,
-  name: string,
-  project: (interactions: ReadonlyArray<Interaction>) => ReadonlyArray<T>,
-): Effect.Effect<ReplayState<T>, never, Scope.Scope> =>
-  Effect.gen(function* () {
-    const load = yield* Effect.cached(cassette.read(name).pipe(Effect.map(project)))
-    const position = yield* SynchronizedRef.make(0)
-
-    yield* Effect.addFinalizer(() =>
-      Effect.gen(function* () {
-        const used = yield* SynchronizedRef.get(position)
-        if (used === 0) return yield* Effect.void
-        const interactions = yield* load.pipe(Effect.orDie)
-        if (used < interactions.length)
-          return yield* Effect.die(
-            new Error(`Unused recorded interactions in ${name}: used ${used} of ${interactions.length}`),
-          )
-        return yield* Effect.void
-      }),
-    )
-
-    return {
-      claim: (validate) =>
-        Effect.flatMap(load, (interactions) =>
-          SynchronizedRef.modifyEffect(position, (index) =>
-            Effect.gen(function* () {
-              const interaction = interactions[index]
-              yield* validate(interaction, index, interactions)
-              if (interaction === undefined)
-                return yield* Effect.die("Replay validation accepted a missing interaction")
-              return [{ interaction, index }, index + 1] as const
-            }),
-          ),
-        ),
-    }
-  })
 
 export const makeReplayPoolState = <T>(
   cassette: CassetteService.Interface,
@@ -80,16 +42,16 @@ export const makeReplayPoolState = <T>(
 ): Effect.Effect<ReplayPoolState<T>, never, Scope.Scope> =>
   Effect.gen(function* () {
     const load = yield* Effect.cached(cassette.read(name).pipe(Effect.map(project)))
-    const claimed = yield* SynchronizedRef.make<ReadonlySet<number>>(new Set())
+    const claimed = yield* SynchronizedRef.make(HashSet.empty<number>())
 
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         const used = yield* SynchronizedRef.get(claimed)
-        if (used.size === 0) return yield* Effect.void
+        if (HashSet.isEmpty(used)) return yield* Effect.void
         const interactions = yield* load.pipe(Effect.orDie)
-        if (used.size < interactions.length)
+        if (HashSet.size(used) < interactions.length)
           return yield* Effect.die(
-            new Error(`Unused recorded interactions in ${name}: used ${used.size} of ${interactions.length}`),
+            new Error(`Unused recorded interactions in ${name}: used ${HashSet.size(used)} of ${interactions.length}`),
           )
         return yield* Effect.void
       }),
@@ -102,11 +64,26 @@ export const makeReplayPoolState = <T>(
             Effect.gen(function* () {
               const index = yield* select(interactions, used)
               const interaction = interactions[index]
-              if (interaction === undefined || used.has(index))
+              if (interaction === undefined || HashSet.has(used, index))
                 return yield* Effect.die("Replay selected an unavailable interaction")
-              return [{ interaction, index }, new Set([...used, index])] as const
+              return [{ interaction, index }, HashSet.add(used, index)] as const
             }),
           ),
         ),
     }
   })
+
+export const makeReplayState = <T>(
+  cassette: CassetteService.Interface,
+  name: string,
+  project: (interactions: ReadonlyArray<Interaction>) => ReadonlyArray<T>,
+): Effect.Effect<ReplayState<T>, never, Scope.Scope> =>
+  makeReplayPoolState(cassette, name, project).pipe(
+    Effect.map((pool) => ({
+      claim: (validate) =>
+        pool.claim((interactions, used) => {
+          const index = HashSet.size(used)
+          return validate(interactions[index], index, interactions).pipe(Effect.as(index))
+        }),
+    })),
+  )

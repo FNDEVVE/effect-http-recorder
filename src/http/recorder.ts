@@ -167,7 +167,7 @@ export const recordingLayer = (
           const claimed = yield* replay
             .claim((interactions, used) => {
               const result = selectFirstMatching(interactions, incoming, match, used)
-              if (result.interaction) return Effect.succeed(result.index)
+              if (result._tag === "Matched") return Effect.succeed(result.index)
               return Effect.fail(
                 transportError(request, `Fixture "${name}" does not match the current request: ${result.detail}.`),
               )

@@ -1,4 +1,4 @@
-import { Option } from "effect"
+import { HashSet, Option } from "effect"
 import type { RequestMatcher, RequestSnapshot } from "../api.js"
 import { canonicalizeJson, decodeJson, isJsonRecord, jsonBody, safeText } from "../replay/comparison.js"
 import type { HttpInteraction } from "./model.js"
@@ -69,26 +69,20 @@ export const selectFirstMatching = (
   interactions: ReadonlyArray<HttpInteraction>,
   incoming: RequestSnapshot,
   match: RequestMatcher,
-  used: ReadonlySet<number>,
-): {
-  readonly interaction: HttpInteraction | undefined
-  readonly index: number
-  readonly detail: string
-} => {
-  const index = interactions.findIndex((interaction, index) => !used.has(index) && match(incoming, interaction.request))
-  if (index !== -1) return { interaction: interactions[index], index, detail: "" }
-
-  const firstUnused = interactions.findIndex((_, index) => !used.has(index))
-  if (firstUnused === -1)
-    return {
-      interaction: undefined,
-      index: -1,
-      detail: `all ${interactions.length} recorded interactions have already been consumed`,
-    }
+  used: HashSet.HashSet<number>,
+): { readonly _tag: "Matched"; readonly index: number } | { readonly _tag: "Unmatched"; readonly detail: string } => {
+  let firstUnused: HttpInteraction | undefined
+  for (let index = 0; index < interactions.length; index++) {
+    if (HashSet.has(used, index)) continue
+    const interaction = interactions[index]
+    firstUnused ??= interaction
+    if (match(incoming, interaction.request)) return { _tag: "Matched", index }
+  }
+  if (firstUnused === undefined)
+    return { _tag: "Unmatched", detail: `all ${interactions.length} recorded interactions have already been consumed` }
   return {
-    interaction: undefined,
-    index: -1,
-    detail: requestDiff(interactions[firstUnused]!.request, incoming).join("\n"),
+    _tag: "Unmatched",
+    detail: requestDiff(firstUnused.request, incoming).join("\n"),
   }
 }
 
