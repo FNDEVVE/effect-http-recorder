@@ -1,5 +1,11 @@
 # effect-http-recorder
 
+## 0.2.2
+
+### Patch Changes
+
+- 7ba86c0: Fix Node 22 WebSocket replay, preserve unchanged JSON bodies during redaction, apply custom URL redaction to HTTP errors, and reject completely unused replay cassettes.
+
 ## 0.2.1
 
 ### Patch Changes
