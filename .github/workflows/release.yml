@@ -31,5 +31,3 @@ jobs:
       - run: bun run typecheck
       - run: bun run test
       - run: bun run release
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

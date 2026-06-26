@@ -21,7 +21,8 @@ export const withPackedArchive = async <A>(use: (archive: string) => Promise<A>)
   try {
     return await use(archive)
   } finally {
-    await Bun.file(archive).delete()
+    const file = Bun.file(archive)
+    if (await file.exists()) await file.delete()
   }
 }
 
