@@ -49,14 +49,31 @@ const frameFromWebSocketData = async (data: unknown): Promise<Frame> => {
   throw new Error(`Unsupported WebSocket frame: ${Object.prototype.toString.call(data)}`)
 }
 
-const closeEvent = (code: number, reason: string) =>
-  new globalThis.CloseEvent("close", { code, reason, wasClean: code === 1000 })
-
-const errorEvent = (error: unknown) =>
-  new ErrorEvent("error", {
-    error,
-    message: error instanceof Error ? error.message : String(error),
+const closeEvent = (code: number, reason: string): CloseEvent => {
+  if (typeof globalThis.CloseEvent === "function")
+    return new globalThis.CloseEvent("close", { code, reason, wasClean: code === 1000 })
+  const event = new Event("close")
+  Object.defineProperties(event, {
+    code: { value: code },
+    reason: { value: reason },
+    wasClean: { value: code === 1000 },
   })
+  return event as CloseEvent
+}
+
+const errorEvent = (error: unknown): ErrorEvent => {
+  if (typeof globalThis.ErrorEvent === "function")
+    return new globalThis.ErrorEvent("error", {
+      error,
+      message: error instanceof Error ? error.message : String(error),
+    })
+  const event = new Event("error")
+  Object.defineProperties(event, {
+    error: { value: error },
+    message: { value: error instanceof Error ? error.message : String(error) },
+  })
+  return event as ErrorEvent
+}
 
 const webSocketFacade = (
   target: EventTarget,

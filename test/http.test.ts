@@ -102,6 +102,44 @@ describe("HTTP", () => {
     )
   })
 
+  test("applies custom URL redaction to mismatch errors", async () => {
+    const secret = "private-account"
+    const exit = await Effect.runPromiseExit(
+      post(`https://example.test/${secret}`, { step: 1 }).pipe(
+        Effect.provide(
+          HttpRecorder.layer("http/multi-step", {
+            redact: { url: (url) => url.replace(secret, "{account}") },
+          }),
+        ),
+      ),
+    )
+    const message = failureText(exit)
+
+    expect(message).toContain("https://example.test/{account}")
+    expect(message).not.toContain(secret)
+  })
+
+  test("fails when a non-empty replay cassette is completely unused", async () => {
+    const exit = await Effect.runPromiseExit(
+      Effect.void.pipe(Effect.scoped, Effect.provide(HttpRecorder.layer("http/multi-step"))),
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect(failureText(exit)).toContain("Unused recorded interactions in http/multi-step: used 0 of 2")
+  })
+
+  test("allows an unused replay layer when the cassette is missing", async () => {
+    using directory = tempDirectory("http-recorder-unused-missing-")
+    await withEnvironment("CI", "true", () =>
+      Effect.runPromise(
+        Effect.void.pipe(
+          Effect.scoped,
+          Effect.provide(HttpRecorder.layer("missing-cassette", { directory: directory.path })),
+        ),
+      ),
+    )
+  })
+
   describe("auto mode", () => {
     test("replays when the cassette exists", async () => {
       using directory = tempDirectory("http-recorder-auto-")

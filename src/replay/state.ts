@@ -1,4 +1,4 @@
-import { Effect, HashSet, Scope, SynchronizedRef } from "effect"
+import { Effect, Exit, HashSet, Ref, Scope, SynchronizedRef } from "effect"
 import type { Interaction } from "../cassette/model.js"
 import type * as CassetteService from "../cassette/store.js"
 import type { CassetteNotFoundError, InvalidCassetteError } from "../cassette/store.js"
@@ -43,31 +43,42 @@ export const makeReplayPoolState = <T>(
   Effect.gen(function* () {
     const load = yield* Effect.cached(cassette.read(name).pipe(Effect.map(project)))
     const claimed = yield* SynchronizedRef.make(HashSet.empty<number>())
+    const attempted = yield* Ref.make(false)
 
-    yield* Effect.addFinalizer(() =>
-      Effect.gen(function* () {
-        const used = yield* SynchronizedRef.get(claimed)
-        if (HashSet.isEmpty(used)) return yield* Effect.void
-        const interactions = yield* load.pipe(Effect.orDie)
-        if (HashSet.size(used) < interactions.length)
-          return yield* Effect.die(
-            new Error(`Unused recorded interactions in ${name}: used ${HashSet.size(used)} of ${interactions.length}`),
-          )
-        return yield* Effect.void
-      }),
+    yield* Effect.addFinalizer((exit) =>
+      Exit.isFailure(exit)
+        ? Effect.void
+        : Effect.gen(function* () {
+            const used = yield* SynchronizedRef.get(claimed)
+            if (HashSet.isEmpty(used) && (yield* Ref.get(attempted))) return yield* Effect.void
+            const interactions = yield* load.pipe(
+              Effect.catchTag("CassetteNotFoundError", () => Effect.succeed([] as ReadonlyArray<T>)),
+              Effect.orDie,
+            )
+            if (HashSet.size(used) < interactions.length)
+              return yield* Effect.die(
+                new Error(
+                  `Unused recorded interactions in ${name}: used ${HashSet.size(used)} of ${interactions.length}`,
+                ),
+              )
+            return yield* Effect.void
+          }),
     )
 
     return {
       claim: (select) =>
-        Effect.flatMap(load, (interactions) =>
-          SynchronizedRef.modifyEffect(claimed, (used) =>
-            Effect.gen(function* () {
-              const index = yield* select(interactions, used)
-              const interaction = interactions[index]
-              if (interaction === undefined || HashSet.has(used, index))
-                return yield* Effect.die("Replay selected an unavailable interaction")
-              return [{ interaction, index }, HashSet.add(used, index)] as const
-            }),
+        Ref.set(attempted, true).pipe(
+          Effect.andThen(load),
+          Effect.flatMap((interactions) =>
+            SynchronizedRef.modifyEffect(claimed, (used) =>
+              Effect.gen(function* () {
+                const index = yield* select(interactions, used)
+                const interaction = interactions[index]
+                if (interaction === undefined || HashSet.has(used, index))
+                  return yield* Effect.die("Replay selected an unavailable interaction")
+                return [{ interaction, index }, HashSet.add(used, index)] as const
+              }),
+            ),
           ),
         ),
     }

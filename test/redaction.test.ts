@@ -127,6 +127,19 @@ describe("redaction", () => {
     })
   })
 
+  test("preserves JSON text when no fields are redacted", () => {
+    const body = '{\n  "id": 9007199254740993,\n  "safe": true\n}'
+
+    expect(
+      make().request({
+        method: "POST",
+        url: "https://example.test/path",
+        headers: { "content-type": "application/json" },
+        body,
+      }).body,
+    ).toBe(body)
+  })
+
   test("extends default header redaction and allow lists", () => {
     const redactor = make({
       headers: ["x-custom-token"],

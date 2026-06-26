@@ -1,14 +1,11 @@
 import { NodeFileSystem } from "@effect/platform-node-shared"
-import { Deferred, Effect, Layer, Option, Ref } from "effect"
+import { Deferred, Effect, Layer, Ref } from "effect"
 import {
   FetchHttpClient,
-  Headers,
-  HttpBody,
   HttpClient,
   HttpClientError,
   HttpClientRequest,
   HttpClientResponse,
-  UrlParams,
 } from "effect/unstable/http"
 import * as CassetteService from "../cassette/store.js"
 import type { RecorderOptions } from "../options.js"
@@ -79,20 +76,15 @@ const responseFromSnapshot = (request: HttpClientRequest.HttpClientRequest, snap
     ),
   )
 
-export const redactedErrorRequest = (request: HttpClientRequest.HttpClientRequest) =>
-  HttpClientRequest.makeWith(
-    request.method,
-    redactUrl(request.url),
-    UrlParams.empty,
-    Option.none(),
-    Headers.empty,
-    HttpBody.empty,
-  )
+export const redactedErrorRequest = (
+  request: HttpClientRequest.HttpClientRequest,
+  redactedUrl = redactUrl(request.url),
+) => HttpClientRequest.make(request.method)(redactedUrl)
 
-const transportError = (request: HttpClientRequest.HttpClientRequest, description: string) =>
+const transportError = (request: HttpClientRequest.HttpClientRequest, description: string, redactedUrl?: string) =>
   new HttpClientError.HttpClientError({
     reason: new HttpClientError.TransportError({
-      request: redactedErrorRequest(request),
+      request: redactedErrorRequest(request, redactedUrl),
       description,
     }),
   })
@@ -134,6 +126,7 @@ export const recordingLayer = (
             const previous = yield* Ref.modify(tail, (current) => [current, completed])
             return yield* Effect.gen(function* () {
               const incoming = yield* snapshotRequest(request)
+              const requestError = (description: string) => transportError(request, description, incoming.url)
               const response = yield* upstream.execute(request)
               const captured = yield* captureResponseBody(response, response.headers["content-type"])
               const responseSnapshot: ResponseSnapshot = {
@@ -149,11 +142,7 @@ export const recordingLayer = (
               yield* Deferred.await(previous)
               yield* cassetteService
                 .append(name, interaction, options.metadata)
-                .pipe(
-                  Effect.catchTag("UnsafeCassetteError", (error) =>
-                    Effect.fail(transportError(request, error.message)),
-                  ),
-                )
+                .pipe(Effect.catchTag("UnsafeCassetteError", (error) => Effect.fail(requestError(error.message))))
               return responseFromSnapshot(request, responseSnapshot)
             }).pipe(Effect.ensuring(Deferred.succeed(completed, undefined)))
           }),
@@ -164,22 +153,20 @@ export const recordingLayer = (
       return HttpClient.make((request) =>
         Effect.gen(function* () {
           const incoming = yield* snapshotRequest(request)
+          const requestError = (description: string) => transportError(request, description, incoming.url)
           const claimed = yield* replay
             .claim((interactions, used) => {
               const result = selectFirstMatching(interactions, incoming, match, used)
               if (result._tag === "Matched") return Effect.succeed(result.index)
               return Effect.fail(
-                transportError(request, `Fixture "${name}" does not match the current request: ${result.detail}.`),
+                requestError(`Fixture "${name}" does not match the current request: ${result.detail}.`),
               )
             })
             .pipe(
               Effect.mapError((error) =>
                 error._tag === "CassetteNotFoundError"
-                  ? transportError(
-                      request,
-                      `Fixture "${name}" not found. Run locally to record it (CI=true forces replay).`,
-                    )
-                  : transportError(request, error.message),
+                  ? requestError(`Fixture "${name}" not found. Run locally to record it (CI=true forces replay).`)
+                  : requestError(error.message),
               ),
             )
           return responseFromSnapshot(request, claimed.interaction.response)

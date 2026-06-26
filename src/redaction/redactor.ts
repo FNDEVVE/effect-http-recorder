@@ -131,21 +131,41 @@ const DEFAULT_REDACT_JSON_FIELDS = [
 
 const normalizeField = (field: string) => field.replace(/[^a-z0-9]/gi, "").toLowerCase()
 
-const redactJsonFields = (value: unknown, fields: ReadonlySet<string>): unknown => {
-  if (Array.isArray(value)) return value.map((item) => redactJsonFields(item, fields))
-  if (!value || typeof value !== "object") return value
-  return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [
-      key,
-      fields.has(normalizeField(key)) ? REDACTED : redactJsonFields(child, fields),
-    ]),
-  )
+interface RedactedJson {
+  readonly value: unknown
+  readonly changed: boolean
+}
+
+const redactJsonFields = (value: unknown, fields: ReadonlySet<string>): RedactedJson => {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => redactJsonFields(item, fields))
+    return {
+      value: items.map((item) => item.value),
+      changed: items.some((item) => item.changed),
+    }
+  }
+  if (!value || typeof value !== "object") return { value, changed: false }
+
+  let changed = false
+  const entries = Object.entries(value).map(([key, child]) => {
+    if (fields.has(normalizeField(key))) {
+      if (child !== REDACTED) changed = true
+      return [key, REDACTED] as const
+    }
+    const redacted = redactJsonFields(child, fields)
+    if (redacted.changed) changed = true
+    return [key, redacted.value] as const
+  })
+  return { value: Object.fromEntries(entries), changed }
 }
 
 const redactBody = (value: string, fields: ReadonlySet<string>, transform: ((body: string) => string) | undefined) => {
   const redacted = Option.match(decodeJson(value), {
     onNone: () => value,
-    onSome: (parsed) => JSON.stringify(redactJsonFields(parsed, fields)),
+    onSome: (parsed) => {
+      const redacted = redactJsonFields(parsed, fields)
+      return redacted.changed ? JSON.stringify(redacted.value) : value
+    },
   })
   return transform?.(redacted) ?? redacted
 }
