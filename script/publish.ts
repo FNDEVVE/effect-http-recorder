@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { $ } from "bun"
 import { fileURLToPath } from "node:url"
 import { withPackedArchive } from "./pack.js"
 import { verifyPackage } from "./verify-package.js"
@@ -9,6 +8,14 @@ process.chdir(dir)
 
 await withPackedArchive(async (archive) => {
   await verifyPackage(archive)
-  if (process.env.GITHUB_ACTIONS === "true") return await $`npm publish ${archive} --tag beta --provenance`
-  await $`npm publish ${archive} --tag beta --provenance=false`
+  const provenance = process.env.GITHUB_ACTIONS === "true" ? "--provenance" : "--provenance=false"
+  const publish = Bun.spawn(["npm", "publish", archive, "--tag", "beta", provenance], {
+    cwd: dir,
+    env: process.env,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  })
+  const exitCode = await publish.exited
+  if (exitCode !== 0) throw new Error(`npm publish exited with code ${exitCode}`)
 })
