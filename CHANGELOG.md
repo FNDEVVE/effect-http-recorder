@@ -1,5 +1,11 @@
 # effect-http-recorder
 
+## 0.3.0
+
+### Minor Changes
+
+- 28e02cf: Add `HttpRecorder.layerFetch` as the fetch-backed convenience layer and change `HttpRecorder.layer` to decorate an application-provided Effect `HttpClient`.
+
 ## 0.2.2
 
 ### Patch Changes
