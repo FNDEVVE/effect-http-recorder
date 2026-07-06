@@ -1,21 +1,30 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Exit } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { existsSync } from "node:fs"
 import { isHttpInteraction } from "../src/cassette/model"
 import { HttpRecorder } from "../src"
 import { failureText, post, readCassette, seedCassetteDirectory, tempDirectory, withEnvironment } from "./support"
 
 const run = <A, E>(effect: Effect.Effect<A, E, HttpClient.HttpClient>) =>
-  Effect.runPromise(effect.pipe(Effect.provide(HttpRecorder.layer("http/multi-step"))))
+  Effect.runPromise(effect.pipe(Effect.provide(HttpRecorder.layerFetch("http/multi-step"))))
 
 const runWith = <A, E>(
   name: string,
   options: HttpRecorder.RecorderOptions,
   effect: Effect.Effect<A, E, HttpClient.HttpClient>,
-) => Effect.runPromise(effect.pipe(Effect.provide(HttpRecorder.layer(name, options))))
+) => Effect.runPromise(effect.pipe(Effect.provide(HttpRecorder.layerFetch(name, options))))
 
 describe("HTTP", () => {
+  test("decorates a provided HTTP client", async () => {
+    await Effect.runPromise(
+      Effect.all([post("https://example.test/echo", { step: 1 }), post("https://example.test/echo", { step: 2 })]).pipe(
+        Effect.provide(HttpRecorder.layer("http/multi-step")),
+        Effect.provide(FetchHttpClient.layer),
+      ),
+    )
+  })
+
   test("replay returns recorded responses in order for identical requests", async () => {
     await runWith(
       "http/retry",
@@ -107,7 +116,7 @@ describe("HTTP", () => {
     const exit = await Effect.runPromiseExit(
       post(`https://example.test/${secret}`, { step: 1 }).pipe(
         Effect.provide(
-          HttpRecorder.layer("http/multi-step", {
+          HttpRecorder.layerFetch("http/multi-step", {
             redact: { url: (url) => url.replace(secret, "{account}") },
           }),
         ),
@@ -121,7 +130,7 @@ describe("HTTP", () => {
 
   test("fails when a non-empty replay cassette is completely unused", async () => {
     const exit = await Effect.runPromiseExit(
-      Effect.void.pipe(Effect.scoped, Effect.provide(HttpRecorder.layer("http/multi-step"))),
+      Effect.void.pipe(Effect.scoped, Effect.provide(HttpRecorder.layerFetch("http/multi-step"))),
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
@@ -134,7 +143,7 @@ describe("HTTP", () => {
       Effect.runPromise(
         Effect.void.pipe(
           Effect.scoped,
-          Effect.provide(HttpRecorder.layer("missing-cassette", { directory: directory.path })),
+          Effect.provide(HttpRecorder.layerFetch("missing-cassette", { directory: directory.path })),
         ),
       ),
     )
@@ -174,7 +183,7 @@ describe("HTTP", () => {
         const exit = await Effect.runPromise(
           Effect.exit(
             post("https://example.test/echo", { step: 1 }).pipe(
-              Effect.provide(HttpRecorder.layer("missing-cassette", { directory: directory.path })),
+              Effect.provide(HttpRecorder.layerFetch("missing-cassette", { directory: directory.path })),
             ),
           ),
         )
@@ -228,7 +237,7 @@ describe("HTTP", () => {
         const responses = await Effect.runPromise(
           Effect.all([request("first"), request("second")], {
             concurrency: "unbounded",
-          }).pipe(Effect.provide(HttpRecorder.layer("concurrent-order", { directory: directory.path }))),
+          }).pipe(Effect.provide(HttpRecorder.layerFetch("concurrent-order", { directory: directory.path }))),
         )
         const cassette = readCassette(`${directory.path}/concurrent-order.json`)
 
@@ -279,7 +288,7 @@ describe("HTTP", () => {
           return yield* http.execute(HttpClientRequest.get(`http://127.0.0.1:${server.port}/empty`))
         })
         const response = await Effect.runPromise(
-          program.pipe(Effect.provide(HttpRecorder.layer("no-content", { directory: directory.path }))),
+          program.pipe(Effect.provide(HttpRecorder.layerFetch("no-content", { directory: directory.path }))),
         )
 
         expect(response.status).toBe(204)
@@ -301,11 +310,11 @@ describe("HTTP", () => {
           return new Uint8Array(yield* response.arrayBuffer)
         })
         const record = await Effect.runPromise(
-          program.pipe(Effect.provide(HttpRecorder.layer("binary", { directory: directory.path }))),
+          program.pipe(Effect.provide(HttpRecorder.layerFetch("binary", { directory: directory.path }))),
         )
         await server.stop()
         const replay = await Effect.runPromise(
-          program.pipe(Effect.provide(HttpRecorder.layer("binary", { directory: directory.path }))),
+          program.pipe(Effect.provide(HttpRecorder.layerFetch("binary", { directory: directory.path }))),
         )
         const cassette = readCassette(`${directory.path}/binary.json`)
         const interaction = cassette.interactions.find(isHttpInteraction)

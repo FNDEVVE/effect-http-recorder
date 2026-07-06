@@ -72,7 +72,7 @@ it.live(
       Effect.provide(
         GitHub.layer.pipe(
           Layer.provide(
-            HttpRecorder.layer("github-effect-repository", {
+            HttpRecorder.layerFetch("github-effect-repository", {
               directory: "examples/recordings",
             }),
           ),

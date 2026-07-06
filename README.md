@@ -51,7 +51,7 @@ describe("getUser", () => {
 
       assert.strictEqual(user.id, 1)
       assert.strictEqual(user.name, "Leanne Graham")
-    }).pipe(Effect.provide(HttpRecorder.layer("users/get-one"))),
+    }).pipe(Effect.provide(HttpRecorder.layerFetch("users/get-one"))),
   )
 })
 ```
@@ -82,11 +82,21 @@ Application code does not need to know whether a response is live or replayed.
 
 ```ts
 HttpRecorder.layer(name, options?)
+HttpRecorder.layerFetch(name, options?)
 HttpRecorder.layerSocket(name, options?)
 HttpRecorder.layerWebSocketConstructor(name, options?)
 ```
 
-That is the complete runtime API. `layer` provides a fetch-backed recorded `HttpClient`. `layerWebSocketConstructor` decorates Effect's `Socket.WebSocketConstructor`, recording every dynamically selected URL and protocol. `layerSocket` is the lower-level transport-neutral decorator for an application-provided `Socket.Socket`.
+That is the complete runtime API. `layer` decorates an application-provided `HttpClient`; `layerFetch` is the convenience layer that supplies Effect's fetch client. `layerWebSocketConstructor` decorates Effect's `Socket.WebSocketConstructor`, recording every dynamically selected URL and protocol. `layerSocket` is the lower-level transport-neutral decorator for an application-provided `Socket.Socket`.
+
+Use `layer` to record through another Effect HTTP transport:
+
+```ts
+import { NodeHttpClient } from "@effect/platform-node"
+import { Layer } from "effect"
+
+const recorder = HttpRecorder.layer("users/get-one").pipe(Layer.provide(NodeHttpClient.layerUndici))
+```
 
 The `HttpRecorder` namespace also exposes the configuration types `RecorderOptions`, `SocketRecorderOptions`, `RedactOptions`, `RequestMatcher`, `RequestSnapshot`, and `CassetteMetadata`.
 
@@ -163,7 +173,7 @@ There is intentionally no public overwrite mode. Deletion makes the set of recor
 Secure defaults remove most headers and redact common credentials in headers, URLs, and JSON bodies. Extend those defaults at layer construction:
 
 ```ts
-HttpRecorder.layer("anthropic/messages", {
+HttpRecorder.layerFetch("anthropic/messages", {
   redact: {
     headers: ["x-project-token"],
     allowRequestHeaders: ["anthropic-version"],
@@ -200,7 +210,7 @@ Concurrent requests are recorded in request-start order even when their response
 Supply a custom equivalence rule when a request contains intentionally volatile data:
 
 ```ts
-HttpRecorder.layer("events/create", {
+HttpRecorder.layerFetch("events/create", {
   match: (incoming, recorded) =>
     incoming.method === recorded.method && new URL(incoming.url).pathname === new URL(recorded.url).pathname,
 })

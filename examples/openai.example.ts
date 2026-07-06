@@ -61,7 +61,7 @@ it.live(
       Effect.provide(
         OpenAI.layer.pipe(
           Layer.provide(
-            HttpRecorder.layer("openai-completion", {
+            HttpRecorder.layerFetch("openai-completion", {
               directory: "examples/recordings",
             }),
           ),

@@ -183,15 +183,24 @@ export const cassetteLayer = (name: string, options: RecordReplayOptions = {}): 
   )
 
 /**
- * Provides a fetch-backed `HttpClient` with cassette recording and replay.
+ * Wraps a provided `HttpClient` with cassette recording and replay.
  *
  * Locally, a missing cassette is recorded from the real service. Existing
  * cassettes are replayed, and `CI=true` makes a missing cassette fail.
  */
-export const layer = (name: string, options: RecorderOptions = {}): Layer.Layer<HttpClient.HttpClient> =>
-  cassetteLayer(name, {
-    directory: options.directory,
+export const layer = (
+  name: string,
+  options: RecorderOptions = {},
+): Layer.Layer<HttpClient.HttpClient, never, HttpClient.HttpClient> =>
+  recordingLayer(name, {
     metadata: options.metadata,
     redactor: make(options.redact),
     match: options.match,
-  })
+  }).pipe(
+    Layer.provide(CassetteService.fileSystem({ directory: options.directory })),
+    Layer.provide(NodeFileSystem.layer),
+  )
+
+/** Provides a fetch-backed `HttpClient` with cassette recording and replay. */
+export const layerFetch = (name: string, options: RecorderOptions = {}): Layer.Layer<HttpClient.HttpClient> =>
+  layer(name, options).pipe(Layer.provide(FetchHttpClient.layer))

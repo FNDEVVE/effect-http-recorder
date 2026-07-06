@@ -2,12 +2,16 @@ import { Layer } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import { Socket } from "effect/unstable/socket"
 import { Api } from "./api.js"
-import { layer } from "./http/recorder.js"
+import { layer, layerFetch } from "./http/recorder.js"
 import { layerSocket, layerWebSocketConstructor } from "./websocket/recorder.js"
 
 /** HTTP and WebSocket cassette recording. */
 export const HttpRecorder: {
-  readonly layer: (name: string, options?: Api.RecorderOptions) => Layer.Layer<HttpClient.HttpClient>
+  readonly layer: (
+    name: string,
+    options?: Api.RecorderOptions,
+  ) => Layer.Layer<HttpClient.HttpClient, never, HttpClient.HttpClient>
+  readonly layerFetch: (name: string, options?: Api.RecorderOptions) => Layer.Layer<HttpClient.HttpClient>
   readonly layerSocket: (
     name: string,
     options?: Api.SocketRecorderOptions,
@@ -16,7 +20,7 @@ export const HttpRecorder: {
     name: string,
     options?: Api.SocketRecorderOptions,
   ) => Layer.Layer<Socket.WebSocketConstructor, never, Socket.WebSocketConstructor>
-} = { layer, layerSocket, layerWebSocketConstructor }
+} = { layer, layerFetch, layerSocket, layerWebSocketConstructor }
 
 export namespace HttpRecorder {
   /** Additional JSON metadata stored with a cassette. */

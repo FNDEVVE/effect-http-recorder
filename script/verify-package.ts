@@ -69,7 +69,8 @@ import { Socket } from "effect/unstable/socket"
 
 const options: HttpRecorder.RecorderOptions = { match: () => true, redact: { jsonFields: ["access_token"] } }
 const socketOptions: HttpRecorder.SocketRecorderOptions = { redact: { jsonFields: ["access_token"] } }
-HttpRecorder.layer("consumer", options) satisfies Layer.Layer<HttpClient.HttpClient>
+HttpRecorder.layer("consumer", options) satisfies Layer.Layer<HttpClient.HttpClient, never, HttpClient.HttpClient>
+HttpRecorder.layerFetch("consumer", options) satisfies Layer.Layer<HttpClient.HttpClient>
 HttpRecorder.layerSocket("consumer/socket", socketOptions).pipe(
   Layer.provide(NodeSocket.layerWebSocket("wss://example.test")),
 ) satisfies Layer.Layer<Socket.Socket>
@@ -85,7 +86,7 @@ HttpRecorder.layerSocket("consumer/socket", { match: () => true })
       `import { HttpRecorder } from ${JSON.stringify(pkg.name)}
 
 const namespace = Object.keys(HttpRecorder).sort()
-if (JSON.stringify(namespace) !== JSON.stringify(["layer", "layerSocket", "layerWebSocketConstructor"])) {
+if (JSON.stringify(namespace) !== JSON.stringify(["layer", "layerFetch", "layerSocket", "layerWebSocketConstructor"])) {
   throw new Error(\`Unexpected HttpRecorder exports: \${namespace}\`)
 }
 `,
