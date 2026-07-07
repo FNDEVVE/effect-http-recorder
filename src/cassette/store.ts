@@ -63,6 +63,9 @@ const cassettePath = (directory: string, name: string) => {
 export const hasCassetteSync = (name: string, options: { readonly directory?: string } = {}) =>
   fs.existsSync(cassettePath(options.directory ?? DEFAULT_RECORDINGS_DIR, name))
 
+export const removeCassetteSync = (name: string, options: { readonly directory?: string } = {}) =>
+  fs.rmSync(cassettePath(options.directory ?? DEFAULT_RECORDINGS_DIR, name), { force: true })
+
 const buildCassette = (
   name: string,
   interactions: ReadonlyArray<Interaction>,
