@@ -1,29 +1,48 @@
 #!/usr/bin/env bun
-import { $ } from "bun"
-import path from "node:path"
-import { fileURLToPath } from "node:url"
+import { BunRuntime, BunServices } from "@effect/platform-bun"
+import { Effect, FileSystem, Path, Schema, Stream } from "effect"
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 
-const dir = fileURLToPath(new URL("..", import.meta.url))
+export class ToolingError extends Schema.TaggedError<ToolingError>()("ToolingError", {
+  message: Schema.String,
+}) {}
 
-export const pack = async () => {
-  process.chdir(dir)
-  const output = await $`npm pack --json`.text()
-  const result: unknown = JSON.parse(output)
-  if (!Array.isArray(result) || result.length !== 1) throw new Error("npm pack returned an unexpected result")
-  const entry: unknown = result[0]
-  if (typeof entry !== "object" || entry === null || !("filename" in entry) || typeof entry.filename !== "string")
-    throw new Error("npm pack did not return an archive filename")
-  return path.join(dir, entry.filename)
-}
+export const run = Effect.fn("Tooling.run")(function* (command: string, args: ReadonlyArray<string>, cwd: string) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+  const code = yield* spawner.exitCode(
+    ChildProcess.make(command, args, { cwd, stdin: "inherit", stdout: "inherit", stderr: "inherit" }),
+  )
+  if (code !== 0)
+    return yield* Effect.fail(new ToolingError({ message: `${command} ${args.join(" ")} exited with code ${code}` }))
+})
 
-export const withPackedArchive = async <A>(use: (archive: string) => Promise<A>) => {
-  const archive = await pack()
-  try {
-    return await use(archive)
-  } finally {
-    const file = Bun.file(archive)
-    if (await file.exists()) await file.delete()
+export const projectDirectory = Effect.gen(function* () {
+  const path = yield* Path.Path
+  return yield* path.fromFileUrl(new URL("..", import.meta.url))
+})
+
+const PackOutput = Schema.fromJsonString(Schema.Tuple([Schema.Struct({ filename: Schema.String })]))
+
+/** The archive belongs to the calling scope, including failed or interrupted consumers. */
+export const pack = Effect.fn("Tooling.pack")(function* () {
+  const fs = yield* FileSystem.FileSystem
+  const path = yield* Path.Path
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "http-recorder-pack-" })
+  const cwd = yield* projectDirectory
+  const process = yield* spawner.spawn(
+    ChildProcess.make("npm", ["pack", "--json", "--pack-destination", directory], { cwd, stderr: "inherit" }),
+  )
+  const output = yield* Stream.mkString(Stream.decodeText(process.stdout))
+  const code = yield* process.exitCode
+  if (code !== 0) return yield* Effect.fail(new ToolingError({ message: `npm pack exited with code ${code}` }))
+  const [entry] = yield* Schema.decodeEffect(PackOutput)(output)
+  if (path.basename(entry.filename) !== entry.filename) {
+    return yield* Effect.fail(new ToolingError({ message: "npm pack returned an unsafe archive filename" }))
   }
-}
+  return path.join(directory, entry.filename)
+})
 
-if (import.meta.main) await pack()
+if (import.meta.main) {
+  BunRuntime.runMain(pack().pipe(Effect.flatMap(Effect.log), Effect.scoped, Effect.provide(BunServices.layer)))
+}

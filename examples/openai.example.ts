@@ -49,7 +49,7 @@ class OpenAI extends Context.Service<OpenAI>()("example/OpenAI", {
   static readonly layer = Layer.effect(this, this.make)
 }
 
-it.live(
+it.effect(
   "records an OpenAI completion",
   () =>
     Effect.gen(function* () {

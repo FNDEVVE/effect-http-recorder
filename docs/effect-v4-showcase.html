@@ -1,0 +1,1673 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="An editorial guide to effect-http-recorder’s Effect v4-first refactor: deterministic clocks, shared WebSocket transcripts, and delivery acknowledgment."
+    />
+    <title>Record. Rewind. Replay. — effect-http-recorder</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f5f7fa;
+        --surface: #ffffff;
+        --ink: #152740;
+        --muted: #536279;
+        --rule: #c9d2e1;
+        --accent: #2454b8;
+        --wash: #e4ecfc;
+        --inverse: #ffffff;
+        --tape: #152740;
+        --tape-ink: #eef3ff;
+        --success: #276345;
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --serif: Georgia, "Times New Roman", serif;
+        --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --paper: #111c2c;
+          --surface: #18263b;
+          --ink: #e7edf7;
+          --muted: #aebbd0;
+          --rule: #3c4e68;
+          --accent: #9cbcff;
+          --wash: #213857;
+          --inverse: #111c2c;
+          --tape: #091321;
+          --tape-ink: #eef3ff;
+          --success: #a0d5b9;
+        }
+      }
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --paper: #f5f7fa;
+        --surface: #ffffff;
+        --ink: #152740;
+        --muted: #536279;
+        --rule: #c9d2e1;
+        --accent: #2454b8;
+        --wash: #e4ecfc;
+        --inverse: #ffffff;
+        --tape: #152740;
+        --tape-ink: #eef3ff;
+        --success: #276345;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --paper: #111c2c;
+        --surface: #18263b;
+        --ink: #e7edf7;
+        --muted: #aebbd0;
+        --rule: #3c4e68;
+        --accent: #9cbcff;
+        --wash: #213857;
+        --inverse: #111c2c;
+        --tape: #091321;
+        --tape-ink: #eef3ff;
+        --success: #a0d5b9;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+        scroll-padding-top: 24px;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font: 16px/1.65 var(--sans);
+      }
+      a {
+        color: var(--accent);
+        text-underline-offset: 4px;
+      }
+      button,
+      select {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.45;
+      }
+      :focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 5px;
+      }
+      .skip {
+        position: absolute;
+        left: 20px;
+        top: -80px;
+        padding: 10px 18px;
+        background: var(--surface);
+        z-index: 2;
+      }
+      .skip:focus {
+        top: 12px;
+      }
+      .page {
+        width: min(1120px, calc(100% - 80px));
+        margin: auto;
+      }
+      .masthead {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        padding: 26px 0;
+        border-bottom: 1px solid var(--rule);
+      }
+      .brand {
+        font: 600 13px/1.5 var(--mono);
+        letter-spacing: -0.03em;
+        overflow-wrap: anywhere;
+      }
+      .theme {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      select {
+        padding: 6px 26px 6px 9px;
+        border: 1px solid var(--rule);
+        border-radius: 3px;
+        background: var(--surface);
+        color: var(--ink);
+        font-size: 12px;
+      }
+      .hero {
+        display: grid;
+        grid-template-columns: 1.25fr 1fr;
+        gap: 65px;
+        align-items: center;
+        padding: 64px 0 44px;
+      }
+      .eyebrow {
+        font: 600 11px/1.5 var(--mono);
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1,
+      h2 {
+        font-family: var(--serif);
+        font-weight: 400;
+        letter-spacing: -0.035em;
+        text-wrap: balance;
+      }
+      h1 {
+        font-size: clamp(48px, 6.3vw, 76px);
+        line-height: 1.03;
+        margin-top: 18px;
+      }
+      h1 em {
+        color: var(--accent);
+        font-weight: 400;
+      }
+      .intro {
+        margin-top: 25px;
+        font-size: 18px;
+        line-height: 1.65;
+        max-width: 49ch;
+        color: var(--muted);
+      }
+      .pin {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 20px;
+        margin-top: 23px;
+        font: 11px/1.6 var(--mono);
+        color: var(--muted);
+      }
+      .cassette {
+        background: var(--tape);
+        color: var(--tape-ink);
+        border-radius: 14px;
+        padding: 23px 24px 17px;
+        transform: rotate(-2deg);
+      }
+      .cassette-head {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 15px;
+        padding-bottom: 18px;
+        font: 11px/1.5 var(--mono);
+      }
+      .cassette-head strong {
+        font: italic 29px/1.15 var(--serif);
+      }
+      .reels {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        border: 1px solid currentColor;
+        border-radius: 70px;
+        padding: 15px 18px;
+      }
+      .reel {
+        width: 64px;
+        height: 64px;
+        border: 9px double currentColor;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+      }
+      .reel::after {
+        content: "";
+        width: 16px;
+        height: 16px;
+        border: 3px solid currentColor;
+        border-radius: 50%;
+      }
+      .window {
+        display: grid;
+        gap: 6px;
+        flex: 1;
+      }
+      .window span {
+        height: 2px;
+        background: currentColor;
+        opacity: 0.5;
+      }
+      .cassette-foot {
+        margin-top: 17px;
+        display: flex;
+        justify-content: space-between;
+        gap: 15px;
+        font: 10px/1.5 var(--mono);
+        letter-spacing: 0.06em;
+      }
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 30px;
+        padding: 22px 0;
+        border-block: 1px solid var(--rule);
+        font-size: 13px;
+      }
+      nav a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+      nav a:hover {
+        color: var(--accent);
+        text-decoration: underline;
+      }
+      .section {
+        display: grid;
+        grid-template-columns: 180px minmax(0, 1fr);
+        gap: 40px;
+        padding: 54px 0;
+        border-bottom: 1px solid var(--rule);
+      }
+      .section-label {
+        color: var(--muted);
+        font: 12px/1.6 var(--mono);
+        padding-top: 6px;
+      }
+      .section-label span {
+        display: block;
+        color: var(--accent);
+        font-size: 10px;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        margin-bottom: 7px;
+      }
+      .content {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 25px;
+      }
+      h2 {
+        font-size: 36px;
+        line-height: 1.17;
+      }
+      h3 {
+        font-size: 16px;
+        line-height: 1.4;
+        font-weight: 650;
+      }
+      .lede {
+        color: var(--muted);
+        max-width: 65ch;
+      }
+      code {
+        font: 0.86em/1.6 var(--mono);
+        overflow-wrap: anywhere;
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+        text-align: left;
+      }
+      th {
+        font: 11px/1.6 var(--mono);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        padding: 0 20px 12px 0;
+        border-bottom: 2px solid var(--rule);
+      }
+      td {
+        vertical-align: top;
+        padding: 16px 20px 16px 0;
+        border-bottom: 1px solid var(--rule);
+        width: 50%;
+        min-width: 220px;
+      }
+      td:last-child {
+        padding-right: 0;
+      }
+      .note {
+        padding: 17px 20px;
+        background: var(--wash);
+        font-size: 14px;
+      }
+      .source-tree {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        gap: 0;
+      }
+      .source-root {
+        padding: 13px 16px;
+        background: var(--tape);
+        color: var(--tape-ink);
+        font: 13px/1.5 var(--mono);
+      }
+      .source-tree li {
+        display: grid;
+        grid-template-columns: 165px minmax(0, 1fr);
+        gap: 20px;
+        padding: 17px 0 17px 22px;
+        border-left: 1px solid var(--rule);
+        border-bottom: 1px solid var(--rule);
+        position: relative;
+      }
+      .source-tree li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 28px;
+        width: 12px;
+        height: 1px;
+        background: var(--rule);
+      }
+      .source-tree code {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--accent);
+      }
+      .source-tree p {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .source-caption {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 26px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .model {
+        border: 1px solid var(--rule);
+        background: var(--surface);
+      }
+      .model-header {
+        padding: 18px 22px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 8px;
+        border-bottom: 1px solid var(--rule);
+        font: 11px/1.6 var(--mono);
+      }
+      .model-header strong {
+        color: var(--accent);
+        font-weight: 500;
+      }
+      .transport {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 9px;
+        padding: 18px 22px;
+        border-top: 1px solid var(--rule);
+      }
+      .control {
+        background: var(--surface);
+        color: var(--ink);
+        border: 1px solid var(--rule);
+        border-radius: 3px;
+        padding: 8px 14px;
+        font-size: 13px;
+      }
+      .control:hover:not(:disabled) {
+        border-color: var(--accent);
+      }
+      .control.primary {
+        background: var(--accent);
+        color: var(--inverse);
+        border-color: var(--accent);
+      }
+      .transport .reset {
+        margin-left: auto;
+      }
+      .tracks {
+        margin: 0;
+        padding: 22px;
+        list-style: none;
+        display: grid;
+      }
+      .tracks li {
+        position: relative;
+        padding: 0 0 0 34px;
+      }
+      .tracks li:not(:last-child)::before {
+        content: "";
+        width: 2px;
+        background: var(--rule);
+        position: absolute;
+        left: 11px;
+        top: 24px;
+        bottom: -2px;
+      }
+      .step {
+        display: flex;
+        width: 100%;
+        text-align: left;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        background: transparent;
+        color: var(--muted);
+        border: 0;
+        border-bottom: 1px solid var(--rule);
+        padding: 14px 8px;
+        font-size: 13px;
+      }
+      .step::before {
+        content: attr(data-number);
+        position: absolute;
+        left: 0;
+        width: 24px;
+        height: 24px;
+        display: grid;
+        place-items: center;
+        background: var(--surface);
+        border: 1px solid var(--rule);
+        border-radius: 50%;
+        font: 10px/1 var(--mono);
+      }
+      .step[aria-current="step"] {
+        color: var(--ink);
+        background: var(--wash);
+      }
+      .step[aria-current="step"]::before {
+        background: var(--accent);
+        color: var(--inverse);
+        border-color: var(--accent);
+      }
+      .step.done::before {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .step small {
+        font: 10px/1.5 var(--mono);
+        white-space: nowrap;
+      }
+      .model-readout {
+        padding: 0 22px 22px;
+        display: grid;
+        gap: 8px;
+        min-height: 135px;
+      }
+      .model-readout h3 {
+        font-size: 17px;
+      }
+      .model-readout p {
+        font-size: 14px;
+        color: var(--muted);
+        max-width: 65ch;
+      }
+      .frame-strip {
+        display: flex;
+        gap: 4px;
+        margin: 4px 0;
+      }
+      .frame-strip span {
+        height: 8px;
+        flex: 1;
+        background: var(--rule);
+      }
+      .frame-strip[data-delivered="true"] span {
+        background: var(--accent);
+      }
+      .model-legend {
+        font: 11px/1.6 var(--mono);
+        color: var(--muted);
+      }
+      pre {
+        margin: 0;
+        padding: 22px;
+        overflow-x: auto;
+        background: var(--tape);
+        color: var(--tape-ink);
+        font: 12px/1.9 var(--mono);
+        tab-size: 2;
+      }
+      pre code {
+        font: inherit;
+        overflow-wrap: normal;
+      }
+      .code-label {
+        font: 11px/1.6 var(--mono);
+        color: var(--muted);
+        margin-bottom: 9px;
+      }
+      .clock-rules {
+        margin: 0;
+        display: grid;
+      }
+      .clock-rules div {
+        display: grid;
+        grid-template-columns: 180px minmax(0, 1fr);
+        gap: 22px;
+        padding: 13px 0;
+        border-bottom: 1px solid var(--rule);
+        font-size: 14px;
+      }
+      dt {
+        font-weight: 600;
+      }
+      dd {
+        margin: 0;
+        color: var(--muted);
+      }
+      .clock-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 20px;
+        padding: 22px;
+      }
+      .clock-instrument {
+        background: var(--tape);
+        color: var(--tape-ink);
+        padding: 23px;
+        display: grid;
+        gap: 22px;
+      }
+      .clock-state-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 14px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid currentColor;
+      }
+      .clock-state-strip span {
+        font: 9px/1.6 var(--mono);
+        letter-spacing: 0.06em;
+        opacity: 0.55;
+      }
+      .clock-state-strip [aria-current="true"] {
+        opacity: 1;
+        text-decoration: underline;
+        text-decoration-thickness: 2px;
+        text-underline-offset: 5px;
+      }
+      .clock-times {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 24px;
+        margin: 0;
+      }
+      .clock-times div {
+        display: grid;
+        gap: 8px;
+        min-width: 0;
+      }
+      .clock-times dt {
+        font: 10px/1.6 var(--mono);
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+      .clock-times dd {
+        display: grid;
+        gap: 7px;
+        color: inherit;
+        overflow-wrap: anywhere;
+      }
+      .clock-date {
+        font: clamp(23px, 3vw, 34px)/1.15 var(--serif);
+        letter-spacing: -0.035em;
+      }
+      .clock-times time,
+      .clock-times small {
+        display: block;
+        font: 10px/1.65 var(--mono);
+      }
+      .clock-offset-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: end;
+        justify-content: space-between;
+        gap: 18px;
+      }
+      .clock-offset {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+      .clock-offset strong {
+        font: 58px/1 var(--mono);
+        letter-spacing: -0.08em;
+        font-variant-numeric: tabular-nums;
+      }
+      .clock-offset span {
+        font: 10px/1.5 var(--mono);
+        max-width: 8ch;
+      }
+      .clock-source {
+        text-align: right;
+        display: grid;
+        gap: 5px;
+        max-width: 28ch;
+      }
+      .clock-source small {
+        font: 9px/1.5 var(--mono);
+        letter-spacing: 0.08em;
+      }
+      .clock-source strong {
+        font: 11px/1.6 var(--mono);
+      }
+      .clock-ruler {
+        display: grid;
+        gap: 8px;
+        padding-right: 4px;
+      }
+      .clock-ruler-line {
+        height: 27px;
+        position: relative;
+        border-bottom: 1px solid currentColor;
+        background: repeating-linear-gradient(90deg, currentColor 0 1px, transparent 1px 10%);
+        background-size: 100% 6px;
+        background-repeat: no-repeat;
+        background-position: bottom;
+      }
+      .clock-ruler-line::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        height: 12px;
+        border-left: 2px solid currentColor;
+      }
+      .clock-ruler-line::after {
+        content: "";
+        position: absolute;
+        left: var(--clock-position, 0%);
+        bottom: 7px;
+        width: 9px;
+        height: 9px;
+        background: currentColor;
+        transform: translateX(-50%) rotate(45deg);
+        transition: left 0.35s ease;
+      }
+      .clock-ruler-labels {
+        display: flex;
+        justify-content: space-between;
+        gap: 15px;
+        font: 9px/1.6 var(--mono);
+      }
+      .query-track dt {
+        font: 10px/1.6 var(--mono);
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .clock-diff {
+        width: 100%;
+        font-size: 12px;
+      }
+      .clock-diff th {
+        font-size: 9px;
+        padding-right: 10px;
+      }
+      .clock-diff td {
+        min-width: 0;
+        width: auto;
+        padding: 12px 10px 12px 0;
+      }
+      .clock-diff td:first-child {
+        width: 42px;
+        font: 10px/1.6 var(--mono);
+        color: var(--muted);
+      }
+      .clock-diff code {
+        display: block;
+        font-size: 11px;
+      }
+      .clock-diff td[data-changed="true"] {
+        background: var(--wash);
+        box-shadow: inset 0 -2px var(--accent);
+        padding-left: 9px;
+      }
+      .diff-label {
+        display: block;
+        font: 9px/1.6 var(--mono);
+        color: var(--accent);
+        margin-top: 5px;
+      }
+      .query-track {
+        display: grid;
+        margin: 0;
+        border-top: 1px solid var(--rule);
+      }
+      .query-track div {
+        display: grid;
+        gap: 7px;
+        padding: 15px 0;
+        border-bottom: 1px solid var(--rule);
+      }
+      .query-track dd {
+        color: var(--ink);
+      }
+      .query-track code {
+        display: block;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      .clock-feedback {
+        display: grid;
+        gap: 6px;
+        padding: 16px;
+        background: var(--wash);
+      }
+      .clock-feedback strong {
+        font: 600 12px/1.6 var(--mono);
+        color: var(--accent);
+      }
+      .clock-feedback[data-result="pass"] strong {
+        color: var(--success);
+      }
+      .clock-feedback p {
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .clock-help {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      #clock-model .control {
+        min-height: 44px;
+      }
+      @media (max-width: 640px) {
+        .clock-times {
+          grid-template-columns: 1fr;
+          gap: 14px;
+        }
+        .clock-body {
+          padding: 15px;
+        }
+        #clock-model .transport {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+        }
+        #clock-anchor {
+          grid-column: 1/-1;
+        }
+      }
+      .evidence-lead {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 12px 24px;
+        padding-bottom: 19px;
+        border-bottom: 2px solid var(--ink);
+      }
+      .evidence-lead strong {
+        font: 48px/1 var(--serif);
+        letter-spacing: -0.05em;
+      }
+      .evidence-lead span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .evidence {
+        padding: 0;
+        margin: 0;
+        list-style: none;
+        display: grid;
+      }
+      .evidence li {
+        display: grid;
+        grid-template-columns: 110px minmax(0, 1fr);
+        gap: 25px;
+        border-bottom: 1px solid var(--rule);
+        padding: 17px 0;
+        font-size: 14px;
+      }
+      .verdict {
+        color: var(--success);
+        font: 11px/1.65 var(--mono);
+        padding-top: 2px;
+      }
+      .evidence p {
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .limits {
+        padding: 0;
+        margin: 0;
+        list-style: none;
+        display: grid;
+        gap: 14px;
+      }
+      .limits li {
+        padding-left: 18px;
+        position: relative;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .limits li::before {
+        content: "—";
+        position: absolute;
+        left: 0;
+        color: var(--accent);
+      }
+      .limits strong {
+        color: var(--ink);
+      }
+      footer {
+        padding: 28px 0 40px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 15px;
+        font: 11px/1.6 var(--mono);
+        color: var(--muted);
+      }
+      [hidden] {
+        display: none !important;
+      }
+      @media (max-width: 850px) {
+        .page {
+          width: calc(100% - 44px);
+        }
+        .hero {
+          gap: 30px;
+        }
+        .cassette {
+          padding: 19px;
+        }
+        .reel {
+          width: 48px;
+          height: 48px;
+        }
+        .section {
+          grid-template-columns: 130px minmax(0, 1fr);
+          gap: 25px;
+        }
+      }
+      @media (max-width: 640px) {
+        .page {
+          width: calc(100% - 36px);
+        }
+        .masthead {
+          flex-wrap: wrap;
+          gap: 12px;
+          padding: 19px 0;
+        }
+        .theme {
+          margin-left: auto;
+        }
+        .hero {
+          grid-template-columns: 1fr;
+          gap: 35px;
+          padding: 39px 0 32px;
+        }
+        h1 {
+          font-size: 57px;
+        }
+        .intro {
+          font-size: 17px;
+        }
+        .cassette {
+          width: min(100%, 370px);
+          transform: none;
+        }
+        nav {
+          gap: 10px 22px;
+        }
+        .section {
+          grid-template-columns: 1fr;
+          gap: 18px;
+          padding: 35px 0;
+        }
+        .section-label {
+          display: flex;
+          gap: 12px;
+          align-items: baseline;
+        }
+        .section-label span {
+          margin: 0;
+        }
+        h2 {
+          font-size: 32px;
+        }
+        .source-tree li {
+          grid-template-columns: 1fr;
+          gap: 4px;
+        }
+        .clock-rules div {
+          grid-template-columns: 1fr;
+          gap: 3px;
+        }
+        .evidence li {
+          grid-template-columns: 1fr;
+          gap: 5px;
+        }
+        .model-header,
+        .transport {
+          padding: 15px;
+        }
+        .tracks {
+          padding: 15px;
+        }
+        .step {
+          align-items: start;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .model-readout {
+          padding: 0 15px 18px;
+          min-height: 160px;
+        }
+        .transport .reset {
+          margin-left: 0;
+        }
+        pre {
+          padding: 16px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+      @media print {
+        .page {
+          width: 100%;
+        }
+        body {
+          background: white;
+          color: black;
+        }
+        .theme,
+        nav,
+        .transport,
+        .skip {
+          display: none !important;
+        }
+        .hero {
+          padding-top: 20px;
+        }
+        .section {
+          break-inside: avoid;
+          padding: 25px 0;
+        }
+        .cassette {
+          transform: none;
+        }
+        .step {
+          color: inherit;
+        }
+        footer {
+          padding-bottom: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to report</a>
+    <div class="page">
+      <header class="masthead">
+        <a class="brand" href="#main">effect-http-recorder</a>
+        <label class="theme" for="theme"
+          >Appearance
+          <select id="theme">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select></label
+        >
+      </header>
+      <main id="main">
+        <div class="hero">
+          <div>
+            <p class="eyebrow">Refactor notes / Effect v4-first</p>
+            <h1>Record.<br />Rewind.<br /><em>Replay.</em></h1>
+            <p class="intro">
+              A cassette is more than a saved response. It holds a point in time, an ordered conversation, and the
+              boundary between a live service and an offline run.
+            </p>
+            <p class="pin"><span>Effect 4 · pinned rc112</span><span>TypeScript 7</span></p>
+          </div>
+          <div
+            class="cassette"
+            role="img"
+            aria-label="Cassette illustration: record a live conversation and replay its transcript offline."
+          >
+            <div class="cassette-head">
+              <strong>Same conversation.<br />Offline.</strong><span>HTTP<br />+ WS</span>
+            </div>
+            <div class="reels" aria-hidden="true">
+              <div class="reel"></div>
+              <div class="window"><span></span><span></span><span></span></div>
+              <div class="reel"></div>
+            </div>
+            <div class="cassette-foot"><span>A / LIVE RECORDING</span><span>B / OFFLINE REPLAY</span></div>
+          </div>
+        </div>
+        <nav aria-label="Report sections">
+          <a href="#changes">What changed</a><a href="#source">Source map</a><a href="#delivery">Delivery model</a
+          ><a href="#clock">Clock anchoring</a><a href="#proof">Evidence &amp; limits</a>
+        </nav>
+        <section class="section" id="changes" aria-labelledby="changes-title">
+          <div class="section-label"><span>Change log</span>The cutover</div>
+          <div class="content">
+            <h2 id="changes-title">Effect at the boundaries.</h2>
+            <p class="lede">
+              The refactor uses Effect v4 services and scoped resources, makes cassette operations composable Effects,
+              and brings both WebSocket interfaces onto a shared transcript.
+            </p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Before</th>
+                    <th scope="col">After</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Synchronous cassette existence and removal helpers.</td>
+                    <td>Effect-based <code>hasCassette</code> and <code>removeCassette</code>.</td>
+                  </tr>
+                  <tr>
+                    <td>Socket replay responsibilities across interface implementations.</td>
+                    <td>A shared transcript, with separate Effect Socket and native-constructor adapters.</td>
+                  </tr>
+                  <tr>
+                    <td>A scheduling yield treated as enough time to deliver a server burst.</td>
+                    <td>
+                      A distinct delivery-ready <code>Deferred</code> acknowledges the next client event or end only
+                      after dispatch.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="note">
+              <strong>Public surface:</strong> named root type exports and a <code>CassetteService</code> namespace.
+              Storage and configuration use <code>FileSystem</code>, <code>Path</code>, and <code>ConfigProvider</code>;
+              resource lifetimes are scoped. HTTP cancellation preserves recording order.
+            </p>
+          </div>
+        </section>
+        <section class="section" id="source" aria-labelledby="source-title">
+          <div class="section-label"><span>Source map</span>Responsibilities</div>
+          <div class="content">
+            <h2 id="source-title">One transcript. Two interfaces.</h2>
+            <p class="lede">
+              Conversation sequencing is shared. Each adapter owns the mechanics of its interface; recorder composition
+              connects the pieces.
+            </p>
+            <div>
+              <div class="source-root">websocket/</div>
+              <ul class="source-tree">
+                <li>
+                  <code>transcript.ts</code>
+                  <p>Shared conversation transcript and replay sequencing.</p>
+                </li>
+                <li>
+                  <code>socket.ts</code>
+                  <p>Effect Socket adapter built with <code>Socket.make</code>.</p>
+                </li>
+                <li>
+                  <code>constructor.ts</code>
+                  <p>Native WebSocket constructor interoperability.</p>
+                </li>
+                <li>
+                  <code>recorder.ts</code>
+                  <p>Recorder composition for the two interfaces.</p>
+                </li>
+              </ul>
+            </div>
+            <div class="source-caption">
+              <span><code>transcript.ts</code> → both adapters</span><span><code>recorder.ts</code> → composition</span>
+            </div>
+          </div>
+        </section>
+        <section class="section" id="delivery" aria-labelledby="delivery-title">
+          <div class="section-label"><span>Replay track</span>Delivery order</div>
+          <div class="content">
+            <h2 id="delivery-title">Yielding is not acknowledgment.</h2>
+            <p class="lede">
+              A long server burst may outlast one scheduler yield. Replay needs an explicit delivery boundary before it
+              acknowledges the next client event—or the end of the transcript.
+            </p>
+            <div class="model">
+              <div class="model-header">
+                <strong>EXPLANATORY MODEL · NOT A LIVE RUNTIME</strong><span id="step-count">Step 1 of 5</span>
+              </div>
+              <ol class="tracks" aria-label="Replay delivery sequence">
+                <li>
+                  <button class="step" type="button" data-step="0" data-number="1" aria-current="step">
+                    <span>Client A → transcript</span><small>accept first client event</small>
+                  </button>
+                </li>
+                <li>
+                  <button class="step" type="button" data-step="1" data-number="2">
+                    <span>Server → client: burst</span><small>dispatch pending</small>
+                  </button>
+                </li>
+                <li>
+                  <button class="step" type="button" data-step="2" data-number="3">
+                    <span>Dispatch → delivery-ready</span><small>complete Deferred</small>
+                  </button>
+                </li>
+                <li>
+                  <button class="step" type="button" data-step="3" data-number="4">
+                    <span>Client B / end → acknowledgment</span><small>delivery boundary satisfied</small>
+                  </button>
+                </li>
+                <li>
+                  <button class="step" type="button" data-step="4" data-number="5">
+                    <span>Transcript → continue / finish</span><small>preserve conversation order</small>
+                  </button>
+                </li>
+              </ol>
+              <div class="model-readout" role="status" aria-live="polite" aria-atomic="true">
+                <h3 id="step-title">Client A starts this exchange.</h3>
+                <p id="step-copy">
+                  The transcript accepts the first client event. The following server burst must be dispatched before
+                  the next client event or end is acknowledged.
+                </p>
+                <div class="frame-strip" id="frames" data-delivered="false" aria-hidden="true">
+                  <span></span><span></span><span></span><span></span>
+                </div>
+                <div class="model-legend" id="frame-caption">Illustrative burst: four frames · not dispatched</div>
+              </div>
+              <div class="transport">
+                <button class="control" id="previous" type="button" disabled>← Previous</button
+                ><button class="control primary" id="next" type="button">Next step →</button
+                ><button class="control reset" id="reset" type="button">Reset sequence</button>
+              </div>
+            </div>
+            <p class="note">
+              <strong>The distinction:</strong> the delivery-ready signal acknowledges dispatch, not wire timing,
+              backpressure, or completion of arbitrary application work. The four-frame display is illustrative; the
+              regression exercises a 10,000-frame burst.
+            </p>
+            <noscript
+              ><p>
+                JavaScript is disabled. The five steps above show the complete sequence: accept Client A, dispatch the
+                burst, signal delivery-ready, acknowledge Client B or end, then continue or finish.
+              </p></noscript
+            >
+          </div>
+        </section>
+        <section class="section" id="clock" aria-labelledby="clock-title">
+          <div class="section-label"><span>Time track</span>Clock anchoring</div>
+          <div class="content">
+            <h2 id="clock-title">Rewind the clock, too.</h2>
+            <p class="lede">
+              A recording session keeps its original <code>recordedAt</code> timestamp as interactions are appended.
+              Tests can anchor Effect’s <code>TestClock</code> to that instant instead of drifting with the date of
+              replay.
+            </p>
+            <div class="model" id="clock-model">
+              <div class="model-header">
+                <strong>EXPLANATORY BROWSER MODEL · NO EFFECT OR NETWORK</strong><span>UTC · ±7-day query window</span>
+              </div>
+              <div class="clock-body">
+                <p class="clock-help">
+                  Record once, advance 30 days, and try replay. Then anchor the clock and replay again. Dates are
+                  calculated from the model clock; replay compares the complete URL strings below.
+                </p>
+                <div class="clock-instrument" id="clock-instrument">
+                  <div class="clock-state-strip" aria-label="Model states; current state is underlined">
+                    <span data-clock-state="EMPTY" aria-current="true">EMPTY</span
+                    ><span data-clock-state="RECORDED">RECORDED</span><span data-clock-state="DRIFTED">DRIFTED</span
+                    ><span data-clock-state="MISMATCH">MISMATCH</span><span data-clock-state="ANCHORED">ANCHORED</span
+                    ><span data-clock-state="MATCH">MATCH</span>
+                  </div>
+                  <dl class="clock-times">
+                    <div>
+                      <dt>A / Recorded clock · immutable</dt>
+                      <dd>
+                        <span class="clock-date" id="clock-recorded-date">No recording</span
+                        ><small id="clock-recorded">No cassette recorded</small>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>B / Current clock · model time</dt>
+                      <dd>
+                        <span class="clock-date" id="clock-current-date">10 Sep 2026</span
+                        ><time id="clock-now" datetime="2026-09-10T15:50:00.000Z">2026-09-10T15:50:00.000Z</time>
+                      </dd>
+                    </div>
+                  </dl>
+                  <div class="clock-offset-row">
+                    <div class="clock-offset"><strong id="clock-offset">—</strong><span>days from recording</span></div>
+                    <div class="clock-source">
+                      <small>ACTIVE CLOCK SOURCE</small><strong id="clock-source">Fixed starting test time</strong>
+                    </div>
+                  </div>
+                  <div class="clock-ruler" aria-label="Current clock offset from recorded time">
+                    <div class="clock-ruler-line" aria-hidden="true"></div>
+                    <div class="clock-ruler-labels">
+                      <span>0 / recordedAt</span><span id="clock-ruler-caption">No recorded reference yet</span
+                      ><span id="clock-ruler-end">+60 days</span>
+                    </div>
+                  </div>
+                </div>
+                <table class="clock-diff" aria-label="Date-window query parameter comparison">
+                  <thead>
+                    <tr>
+                      <th scope="col">Key</th>
+                      <th scope="col">Recorded · immutable</th>
+                      <th scope="col">Current · derived</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>from</td>
+                      <td><code id="clock-from-expected">Not recorded</code></td>
+                      <td id="clock-from-cell">
+                        <code id="clock-from-actual">—</code
+                        ><span class="diff-label" id="clock-from-label">NO REFERENCE</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>to</td>
+                      <td><code id="clock-to-expected">Not recorded</code></td>
+                      <td id="clock-to-cell">
+                        <code id="clock-to-actual">—</code
+                        ><span class="diff-label" id="clock-to-label">NO REFERENCE</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <dl class="query-track">
+                  <div>
+                    <dt>Expected URL · stored in cassette</dt>
+                    <dd><code id="clock-expected">Record a cassette to capture the expected URL.</code></dd>
+                  </div>
+                  <div>
+                    <dt>Actual URL · computed from current clock</dt>
+                    <dd><code id="clock-actual">Enable JavaScript to compute the date-window URL.</code></dd>
+                  </div>
+                </dl>
+                <div
+                  class="clock-feedback"
+                  id="clock-feedback"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                  data-result="idle"
+                >
+                  <strong id="clock-verdict">READY TO RECORD</strong>
+                  <p id="clock-status">
+                    Record the fixed starting instant. Replay and clock controls become available after recording.
+                  </p>
+                </div>
+              </div>
+              <div class="transport" aria-label="Clock simulation controls">
+                <button class="control primary" id="clock-record" type="button">Record cassette</button>
+                <button class="control" id="clock-advance" type="button" disabled>Advance 30 days</button>
+                <button class="control" id="clock-replay" type="button" disabled>Replay request</button>
+                <button class="control" id="clock-anchor" type="button" disabled>Anchor to recordedAt</button>
+                <button class="control reset" id="clock-reset" type="button" disabled>Reset model</button>
+              </div>
+            </div>
+            <noscript
+              ><p>
+                The clock simulation requires JavaScript. Advancing the clock changes both date-window parameters;
+                anchoring restores the recorded instant and the original URL.
+              </p></noscript
+            >
+            <p class="note">
+              <strong>Separate implementation evidence:</strong> the real date-window regression was independently
+              verified: after a 30-day clock advance, replay fails; after anchoring, replay succeeds with the original
+              response while the server is stopped. The browser model above explains that mechanism; it does not run the
+              regression.
+            </p>
+            <div>
+              <p class="code-label">
+                Effect test-body excerpt · local server and directory supplied by the test fixture
+              </p>
+              <pre><code>import { DateTime, Duration, Effect, Exit } from "effect"
+import { TestClock } from "effect/testing"
+import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpRecorder, setTestClockToRecordedAt } from "effect-http-recorder"
+
+const requestItems = Effect.gen(function* () {
+  const now = yield* DateTime.now
+  const query = new URLSearchParams({
+    from: DateTime.formatIso(DateTime.subtract(now, { days: 7 })),
+    to: DateTime.formatIso(DateTime.add(now, { days: 7 })),
+  })
+  const http = yield* HttpClient.HttpClient
+  const response = yield* http.execute(
+    HttpClientRequest.get(`${server.url}/items?${query}`),
+  )
+  return yield* response.text
+}).pipe(Effect.provide(HttpRecorder.layerFetch("items", {
+  directory: directory.path,
+})))
+
+const scenario = Effect.gen(function* () {
+  yield* TestClock.setTime(Date.parse("2026-09-10T15:50:00Z"))
+  const original = yield* requestItems
+  yield* server.stop
+
+  yield* TestClock.adjust(Duration.days(30))
+  const drifted = yield* Effect.exit(requestItems)
+
+  yield* setTestClockToRecordedAt("items", {
+    directory: directory.path,
+  })
+  const replay = yield* requestItems
+  return {
+    driftedReplayFailed: Exit.isFailure(drifted),
+    anchoredReplayMatches: replay === original,
+  }
+})</code></pre>
+            </div>
+            <p class="lede">
+              <code>recordedAt("items")</code> reads the recorded instant without moving the clock.
+              <code>readCassette("items")</code> reads the full cassette. The clock helper performs the explicit rewind.
+            </p>
+            <dl class="clock-rules">
+              <div>
+                <dt>Timestamp present</dt>
+                <dd>The clock helper sets <code>TestClock</code> to the recorded instant.</dd>
+              </div>
+              <div>
+                <dt>Cassette absent</dt>
+                <dd>
+                  The clock helper uses live time, allowing a new recording run. Direct <code>recordedAt</code> and
+                  <code>readCassette</code> reads still report the missing cassette.
+                </dd>
+              </div>
+              <div>
+                <dt>Legacy timestamp absent</dt>
+                <dd>
+                  <code>MissingRecordedAtError</code> is distinct from invalid data. Re-record to enable clock
+                  anchoring.
+                </dd>
+              </div>
+              <div>
+                <dt>Timestamp malformed</dt>
+                <dd>
+                  <code>InvalidCassetteError</code> surfaces the invalid cassette rather than silently substituting live
+                  time.
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </section>
+        <section class="section" id="proof" aria-labelledby="proof-title">
+          <div class="section-label"><span>Verification</span>Evidence &amp; limits</div>
+          <div class="content">
+            <h2 id="proof-title">Recorded live. Replayed offline.</h2>
+            <p class="lede">
+              Reported verification for the refactor. These are implementation checks, not measurements performed by
+              this page.
+            </p>
+            <div class="evidence-lead">
+              <strong>79</strong><span>tests passing</span><strong>3</strong><span>offline examples passing</span>
+            </div>
+            <ul class="evidence">
+              <li>
+                <span class="verdict">PASS / TOOLING</span>
+                <div>
+                  <h3>Format, lint, imports, and types</h3>
+                  <p>Formatting, linting, import checks, and typechecks pass against the pinned dependency baseline.</p>
+                </div>
+              </li>
+              <li>
+                <span class="verdict">PASS / PACKAGE</span>
+                <div>
+                  <h3>Packaged Node and Bun consumers</h3>
+                  <p>Consumer checks pass using the packaged library, not only repository source imports.</p>
+                </div>
+              </li>
+              <li>
+                <span class="verdict">PASS / REPLAY</span>
+                <div>
+                  <h3>Two dynamic WebSocket URLs, both interfaces</h3>
+                  <p>
+                    A real server recorded text and binary exchanges, then stopped. The Effect Socket and
+                    native-constructor interfaces both replayed the recordings offline.
+                  </p>
+                </div>
+              </li>
+              <li>
+                <span class="verdict">FAIL → PASS</span>
+                <div>
+                  <h3>A 10,000-frame burst regression</h3>
+                  <p>
+                    The regression fails before the delivery acknowledgment fix and passes after it. Greeting and
+                    queued-close smoke checks also pass.
+                  </p>
+                </div>
+              </li>
+            </ul>
+            <h3>What this does not promise</h3>
+            <ul class="limits">
+              <li><strong>Responses are buffered.</strong> This is not a claim of streaming-response fidelity.</li>
+              <li>
+                <strong>Replay preserves the conversation, not the network.</strong> Wire timing and backpressure
+                fidelity are outside the guarantee.
+              </li>
+              <li>
+                <strong>Effect v4 remains a pinned release candidate.</strong> The target is rc112, not a claim of
+                compatibility with every future v4 release.
+              </li>
+            </ul>
+          </div>
+        </section>
+      </main>
+      <footer>
+        <span>effect-http-recorder / Effect v4-first refactor</span
+        ><span>Self-contained report · no network required</span>
+      </footer>
+    </div>
+    <script>
+      ;(() => {
+        const theme = document.getElementById("theme")
+        theme.addEventListener("change", () => {
+          if (theme.value === "system") document.documentElement.removeAttribute("data-theme")
+          else document.documentElement.dataset.theme = theme.value
+        })
+        const stages = [
+          [
+            "Client A starts this exchange.",
+            "The transcript accepts the first client event. The following server burst must be dispatched before the next client event or end is acknowledged.",
+            "Illustrative burst: four frames · not dispatched",
+          ],
+          [
+            "The server burst is being dispatched.",
+            "Advancing the transcript or yielding once is not proof of delivery. The next client event or end cannot be acknowledged while dispatch is still pending.",
+            "Illustrative burst: four frames · dispatch pending",
+          ],
+          [
+            "Dispatch completes the delivery-ready signal.",
+            "The server burst has been dispatched. A distinct Deferred communicates this boundary instead of guessing how much progress a scheduling yield allows.",
+            "Illustrative burst: four frames · dispatched",
+          ],
+          [
+            "Client B—or end—can now be acknowledged.",
+            "The delivery-ready boundary is satisfied. The transcript can acknowledge the next client event or end without overtaking the preceding server burst.",
+            "Illustrative burst: four frames · acknowledgment unblocked",
+          ],
+          [
+            "Continue the conversation, or finish.",
+            "Replay proceeds from the acknowledged boundary. This models transcript order, not elapsed network time or completion of application-level processing.",
+            "Illustrative burst: four frames · sequence complete",
+          ],
+        ]
+        const steps = Array.from(document.querySelectorAll("[data-step]"))
+        const previous = document.getElementById("previous")
+        const next = document.getElementById("next")
+        let current = 0
+        const render = (index) => {
+          current = Math.max(0, Math.min(stages.length - 1, index))
+          steps.forEach((button, i) => {
+            if (i === current) button.setAttribute("aria-current", "step")
+            else button.removeAttribute("aria-current")
+            button.classList.toggle("done", i < current)
+          })
+          document.getElementById("step-count").textContent = `Step ${current + 1} of ${stages.length}`
+          document.getElementById("step-title").textContent = stages[current][0]
+          document.getElementById("step-copy").textContent = stages[current][1]
+          document.getElementById("frame-caption").textContent = stages[current][2]
+          document.getElementById("frames").dataset.delivered = String(current >= 2)
+          previous.disabled = current === 0
+          next.disabled = current === stages.length - 1
+        }
+        steps.forEach((button, i) => button.addEventListener("click", () => render(i)))
+        previous.addEventListener("click", () => render(current - 1))
+        next.addEventListener("click", () => render(current + 1))
+        document.getElementById("reset").addEventListener("click", () => render(0))
+        const clockStart = Date.parse("2026-09-10T15:50:00.000Z")
+        const day = 24 * 60 * 60 * 1000
+        let clockNow = clockStart
+        let clockCassette = null
+        let clockState = "EMPTY"
+        let clockSource = "Fixed starting test time"
+        const clockDate = new Intl.DateTimeFormat("en-GB", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+          timeZone: "UTC",
+        })
+        const clockRecord = document.getElementById("clock-record")
+        const clockAdvance = document.getElementById("clock-advance")
+        const clockReplay = document.getElementById("clock-replay")
+        const clockAnchor = document.getElementById("clock-anchor")
+        const clockReset = document.getElementById("clock-reset")
+        const clockUrl = (instant) =>
+          `/items?${new URLSearchParams({
+            from: new Date(instant - 7 * day).toISOString(),
+            to: new Date(instant + 7 * day).toISOString(),
+          })}`
+        const renderClock = (verdict, message, result = "idle") => {
+          const iso = new Date(clockNow).toISOString()
+          const time = document.getElementById("clock-now")
+          time.dateTime = iso
+          time.textContent = iso
+          document.getElementById("clock-recorded").textContent = clockCassette
+            ? new Date(clockCassette.recordedAt).toISOString()
+            : "No cassette recorded"
+          document.getElementById("clock-expected").textContent = clockCassette
+            ? clockCassette.url
+            : "Record a cassette to capture the expected URL."
+          document.getElementById("clock-actual").textContent = clockUrl(clockNow)
+          document.getElementById("clock-verdict").textContent = verdict
+          document.getElementById("clock-status").textContent = message
+          document.getElementById("clock-feedback").dataset.result = result
+          document.getElementById("clock-model").dataset.state = clockState
+          document.querySelectorAll("[data-clock-state]").forEach((label) => {
+            if (label.dataset.clockState === clockState) label.setAttribute("aria-current", "true")
+            else label.removeAttribute("aria-current")
+          })
+          document.getElementById("clock-current-date").textContent = clockDate.format(clockNow)
+          document.getElementById("clock-recorded-date").textContent = clockCassette
+            ? clockDate.format(clockCassette.recordedAt)
+            : "No recording"
+          const offset = clockCassette ? (clockNow - clockCassette.recordedAt) / day : 0
+          const scale = Math.max(60, offset)
+          document.getElementById("clock-offset").textContent = clockCassette
+            ? offset > 0
+              ? `+${offset}`
+              : String(offset)
+            : "—"
+          document.getElementById("clock-source").textContent = clockSource
+          document
+            .getElementById("clock-instrument")
+            .style.setProperty("--clock-position", `${(offset / scale) * 100}%`)
+          document.getElementById("clock-ruler-end").textContent = `+${scale} days`
+          document.getElementById("clock-ruler-caption").textContent = clockCassette
+            ? `Current: ${offset === 0 ? "aligned" : `+${offset} days`}`
+            : "No recorded reference yet"
+          const actualQuery = new URLSearchParams(clockUrl(clockNow).split("?")[1])
+          const expectedQuery = clockCassette ? new URLSearchParams(clockCassette.url.split("?")[1]) : null
+          for (const key of ["from", "to"]) {
+            const actual = actualQuery.get(key)
+            const expected = expectedQuery?.get(key)
+            const changed = expected !== undefined && expected !== actual
+            document.getElementById(`clock-${key}-actual`).textContent = actual
+            document.getElementById(`clock-${key}-expected`).textContent = expected ?? "Not recorded"
+            document.getElementById(`clock-${key}-cell`).dataset.changed = String(changed)
+            document.getElementById(`clock-${key}-label`).textContent =
+              expected === undefined ? "NO REFERENCE" : changed ? "CHANGED" : "IDENTICAL"
+          }
+          clockRecord.disabled = clockCassette !== null
+          clockAdvance.disabled = clockCassette === null
+          clockReplay.disabled = clockCassette === null
+          clockAnchor.disabled = clockCassette === null || clockNow === clockCassette.recordedAt
+          clockReset.disabled = clockCassette === null
+        }
+        clockRecord.addEventListener("click", () => {
+          clockCassette = { recordedAt: clockNow, url: clockUrl(clockNow) }
+          clockState = "RECORDED"
+          renderClock(
+            "RECORDED · URL CAPTURED",
+            "The cassette now holds this instant and URL. Advance 30 days to introduce clock drift. Anchoring is disabled because the clock already matches recordedAt.",
+          )
+          clockAdvance.focus()
+        })
+        clockAdvance.addEventListener("click", () => {
+          clockNow += 30 * day
+          clockState = "DRIFTED"
+          clockSource = "Advanced test time"
+          renderClock(
+            "CLOCK ADVANCED · REPLAY NOT CHECKED",
+            "The model clock moved forward 30 days; the cassette did not change. Replay the newly computed request to check whether it still matches.",
+          )
+        })
+        clockReplay.addEventListener("click", () => {
+          const matches = clockUrl(clockNow) === clockCassette.url
+          clockState = matches ? "MATCH" : "MISMATCH"
+          renderClock(
+            matches ? "PASS · EXACT URL MATCH" : "FAIL · QUERY MISMATCH",
+            matches
+              ? "The computed URL exactly matches the recorded URL. This model can replay the saved exchange without a live service."
+              : "The current date window differs from the recorded query. Anchor with setTestClockToRecordedAt, then replay to compare again.",
+            matches ? "pass" : "fail",
+          )
+        })
+        clockAnchor.addEventListener("click", () => {
+          clockNow = clockCassette.recordedAt
+          clockState = "ANCHORED"
+          clockSource = "recordedAt · anchored"
+          renderClock(
+            "CLOCK ANCHORED · REPLAY NOT CHECKED",
+            "The model clock rewound to recordedAt, as setTestClockToRecordedAt does for TestClock. Replay again to check the restored URL.",
+          )
+          clockReplay.focus()
+        })
+        clockReset.addEventListener("click", () => {
+          clockNow = clockStart
+          clockCassette = null
+          clockState = "EMPTY"
+          clockSource = "Fixed starting test time"
+          renderClock(
+            "READY TO RECORD",
+            "The model cassette is cleared and the fixed starting instant is restored. Record to begin again.",
+          )
+          clockRecord.focus()
+        })
+        renderClock(
+          "READY TO RECORD",
+          "Record the fixed starting instant. Replay and clock controls become available after recording.",
+        )
+      })()
+    </script>
+  </body>
+</html>

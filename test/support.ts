@@ -1,21 +1,19 @@
-import { NodeFileSystem } from "@effect/platform-node-shared"
-import { Cause, Effect, Exit } from "effect"
-import { HttpBody, HttpClient, HttpClientRequest } from "effect/unstable/http"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
-import { decodeCassette, type Interaction } from "../src/cassette/model"
+import { NodeHttpServer } from "@effect/platform-node"
+import { NodeFileSystem, NodePath } from "@effect/platform-node-shared"
+import { Cause, ConfigProvider, Context, Effect, Exit, FileSystem, Layer, Schema, Scope } from "effect"
+import { HttpBody, HttpClient, HttpClientRequest, HttpServer, type HttpServerResponse } from "effect/unstable/http"
+import { CassetteSchema, type Interaction } from "../src/cassette/model"
 import { Service, fileSystem } from "../src/cassette/store"
 
-export const tempDirectory = (prefix: string) => {
-  const directory = mkdtempSync(join(tmpdir(), prefix))
-  return {
-    path: directory,
-    [Symbol.dispose]() {
-      rmSync(directory, { recursive: true, force: true })
-    },
-  }
-}
+export const fromMap = (entries: ReadonlyMap<string, string> | Record<string, string>) =>
+  ConfigProvider.layer(ConfigProvider.fromEnvRecord(entries instanceof Map ? Object.fromEntries(entries) : entries))
+
+export const testLayer = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer, fromMap({}))
+
+export const tempDirectory = Effect.fn("Test.tempDirectory")(function* (prefix: string) {
+  const fs = yield* FileSystem.FileSystem
+  return { path: yield* fs.makeTempDirectoryScoped({ prefix }) }
+})
 
 export const post = (url: string, body: object) =>
   Effect.gen(function* () {
@@ -29,13 +27,16 @@ export const post = (url: string, body: object) =>
     return yield* response.text
   })
 
-export const readCassette = (file: string) => decodeCassette(JSON.parse(readFileSync(file, "utf8")))
+export const readCassette = Effect.fn("Test.readCassette")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem
+  return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(CassetteSchema))(yield* fs.readFileString(file))
+})
 
-export const runFileCassette = <A, E>(directory: string, effect: Effect.Effect<A, E, Service>) =>
-  Effect.runPromise(effect.pipe(Effect.provide(fileSystem({ directory })), Effect.provide(NodeFileSystem.layer)))
+export const withFileCassette = <A, E, R>(directory: string, effect: Effect.Effect<A, E, R | Service>) =>
+  effect.pipe(Effect.provide(fileSystem({ directory })))
 
 export const seedCassetteDirectory = (directory: string, name: string, interactions: ReadonlyArray<Interaction>) =>
-  runFileCassette(
+  withFileCassette(
     directory,
     Effect.gen(function* () {
       const cassette = yield* Service
@@ -43,17 +44,15 @@ export const seedCassetteDirectory = (directory: string, name: string, interacti
     }),
   )
 
-export const withEnvironment = async <A>(name: string, value: string | undefined, run: () => Promise<A>) => {
-  const previous = process.env[name]
-  if (value === undefined) delete process.env[name]
-  else process.env[name] = value
-  try {
-    return await run()
-  } finally {
-    if (previous === undefined) delete process.env[name]
-    else process.env[name] = previous
-  }
-}
+export const startServer = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+  Effect.gen(function* () {
+    const scope = yield* Effect.acquireRelease(Scope.make(), (scope) => Scope.close(scope, Exit.void))
+    const context = yield* Layer.buildWithScope(NodeHttpServer.layerTest, scope)
+    const server = Context.get(context, HttpServer.HttpServer)
+    yield* server.serve(app).pipe(Scope.provide(scope))
+    if (server.address._tag !== "TcpAddress") return yield* Effect.die(new Error("Expected TCP test server"))
+    return { url: `http://127.0.0.1:${server.address.port}`, stop: Scope.close(scope, Exit.void) }
+  })
 
 export const failureText = (exit: Exit.Exit<unknown, unknown>) => {
   if (Exit.isSuccess(exit)) return ""

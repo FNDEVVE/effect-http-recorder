@@ -1,6 +1,6 @@
 # Examples
 
-- [`github.example.ts`](./github.example.ts) runs three GitHub requests concurrently with random delays, demonstrating that each request claims its matching recorded interaction regardless of execution order.
+- [`github.example.ts`](./github.example.ts) runs three GitHub requests concurrently, demonstrating that each request claims its matching recorded interaction regardless of execution order.
 - [`openai.example.ts`](./openai.example.ts) records a real OpenAI chat completion, then replays the LLM response without making another paid request.
 - [`websocket.example.ts`](./websocket.example.ts) connects to two chat rooms and exchanges schema-validated JSON messages over each recorded WebSocket.
 
@@ -10,7 +10,7 @@ The examples use only the public `effect-http-recorder` package entrypoint. Run 
 bun run test:examples
 ```
 
-The first run writes cassettes to [`recordings`](./recordings). Later runs replay those cassettes without contacting either service.
+This command replays the committed cassettes from [`recordings`](./recordings) without contacting the services. If a cassette is missing, the preflight fails rather than silently making a network request.
 
 Delete and regenerate all example recordings with:
 
@@ -18,7 +18,7 @@ Delete and regenerate all example recordings with:
 bun run record:examples
 ```
 
-This command removes only `examples/recordings`, then runs all examples against their real services. Commit the regenerated JSON files so CI can replay them.
+This command explicitly enables recording, removes only `examples/recordings`, then runs all examples against their real services. Review and commit the regenerated JSON files so CI can replay them. It can make paid provider requests; supply credentials only when intentionally recording.
 
 The GitHub example optionally reads `GITHUB_TOKEN`. To record with the token from the local GitHub CLI login:
 

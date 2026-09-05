@@ -1,26 +1,29 @@
 #!/usr/bin/env bun
-import { $ } from "bun"
-import { readdir, rm } from "node:fs/promises"
+import { BunRuntime, BunServices } from "@effect/platform-bun"
+import { Effect, FileSystem, Path } from "effect"
+import { projectDirectory, run, ToolingError } from "./pack.js"
 
-await rm("dist", { recursive: true, force: true })
-await $`bunx tsc -p tsconfig.build.json`
+const build = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  const path = yield* Path.Path
+  const cwd = yield* projectDirectory
+  const outdir = path.join(cwd, "dist")
+  yield* fs.remove(outdir, { recursive: true, force: true })
+  yield* run(path.join(cwd, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.build.json"], cwd)
 
-const build = await Bun.build({
-  entrypoints: ["src/index.ts"],
-  outdir: "dist",
-  target: "node",
-  format: "esm",
-  packages: "external",
+  const result = yield* Effect.tryPromise({
+    try: () =>
+      Bun.build({
+        entrypoints: [path.join(cwd, "src", "index.ts")],
+        outdir,
+        target: "node",
+        format: "esm",
+        packages: "external",
+      }),
+    catch: (cause) => new ToolingError({ message: `Bundler failed: ${String(cause)}` }),
+  })
+  if (!result.success) return yield* Effect.fail(new ToolingError({ message: result.logs.join("\n") }))
+  // Preserve the entire declaration graph: public helpers reference cassette and transport types.
 })
-if (!build.success) throw new AggregateError(build.logs, "Failed to build effect-http-recorder")
 
-await Promise.all(
-  (await readdir("dist", { recursive: true }))
-    .filter((file) => file.endsWith(".d.ts") && file !== "index.d.ts" && file !== "api.d.ts")
-    .map((file) => rm(`dist/${file}`)),
-)
-
-for (const file of ["dist/index.d.ts", "dist/api.d.ts"]) {
-  if ((await Bun.file(file).text()).includes(["import", "("].join("")))
-    throw new Error(`${file} contains dynamic import syntax`)
-}
+BunRuntime.runMain(build.pipe(Effect.provide(BunServices.layer)))

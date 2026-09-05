@@ -1,144 +1,123 @@
 #!/usr/bin/env bun
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import path from "node:path"
-import { withPackedArchive } from "./pack.js"
+import { BunRuntime, BunServices } from "@effect/platform-bun"
+import { Effect, FileSystem, Path, Schema } from "effect"
+import { pack, projectDirectory, run } from "./pack.js"
 
-const pkg = await Bun.file(new URL("../package.json", import.meta.url)).json()
-if (
-  typeof pkg !== "object" ||
-  pkg === null ||
-  !("name" in pkg) ||
-  typeof pkg.name !== "string" ||
-  !("peerDependencies" in pkg) ||
-  typeof pkg.peerDependencies !== "object" ||
-  pkg.peerDependencies === null ||
-  !("effect" in pkg.peerDependencies) ||
-  typeof pkg.peerDependencies.effect !== "string" ||
-  !("devDependencies" in pkg) ||
-  typeof pkg.devDependencies !== "object" ||
-  pkg.devDependencies === null ||
-  !("typescript" in pkg.devDependencies) ||
-  typeof pkg.devDependencies.typescript !== "string" ||
-  !("@effect/platform-node-shared" in pkg.dependencies) ||
-  typeof pkg.dependencies["@effect/platform-node-shared"] !== "string" ||
-  !("@effect/platform-node" in pkg.devDependencies) ||
-  typeof pkg.devDependencies["@effect/platform-node"] !== "string"
+const Package = Schema.fromJsonString(
+  Schema.Struct({
+    name: Schema.String,
+    peerDependencies: Schema.Struct({ effect: Schema.String }),
+    dependencies: Schema.Struct({ "@effect/platform-node-shared": Schema.String }),
+    devDependencies: Schema.Struct({
+      typescript: Schema.String,
+      "@effect/platform-node": Schema.String,
+      "@types/node": Schema.String,
+    }),
+  }),
 )
-  throw new Error("Invalid package metadata")
 
-const run = async (command: ReadonlyArray<string>, cwd: string) => {
-  const process = Bun.spawn([...command], {
-    cwd,
-    env: globalThis.process.env,
-    stdout: "inherit",
-    stderr: "inherit",
-  })
-  const exitCode = await process.exited
-  if (exitCode !== 0) throw new Error(`${command.join(" ")} exited with code ${exitCode}`)
-}
-
-const reject = async (command: ReadonlyArray<string>, cwd: string) => {
-  const process = Bun.spawn([...command], { cwd, env: globalThis.process.env, stdout: "ignore", stderr: "ignore" })
-  if ((await process.exited) === 0) throw new Error(`${command.join(" ")} unexpectedly succeeded`)
-}
-
-export const verifyPackage = async (archive: string) => {
-  const directory = await mkdtemp(path.join(tmpdir(), "http-recorder-consumer-"))
-  try {
-    await writeFile(
-      path.join(directory, "package.json"),
-      JSON.stringify({
-        name: "http-recorder-consumer",
-        private: true,
-        type: "module",
-        overrides: {
-          "@effect/platform-node": {
-            "@effect/platform-node-shared": pkg.dependencies["@effect/platform-node-shared"],
-          },
-        },
-      }),
-    )
-    await writeFile(
-      path.join(directory, "consumer.ts"),
-      `import { HttpRecorder } from ${JSON.stringify(pkg.name)}
-import { NodeSocket } from "@effect/platform-node"
-import { Layer } from "effect"
-import { HttpClient } from "effect/unstable/http"
+export const verifyPackage = Effect.fn("Tooling.verifyPackage")(function* (archive: string) {
+  const fs = yield* FileSystem.FileSystem
+  const path = yield* Path.Path
+  const cwd = yield* projectDirectory
+  const pkg = yield* fs
+    .readFileString(path.join(cwd, "package.json"))
+    .pipe(Effect.flatMap(Schema.decodeEffect(Package)))
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "http-recorder-consumer-" })
+  yield* fs.writeFileString(
+    path.join(directory, "package.json"),
+    JSON.stringify({
+      name: "http-recorder-consumer",
+      private: true,
+      type: "module",
+      overrides: { "@effect/platform-node-shared": pkg.dependencies["@effect/platform-node-shared"] },
+    }),
+  )
+  yield* fs.writeFileString(
+    path.join(directory, "consumer.ts"),
+    `import { strict as assert } from "node:assert"
+import { createRequire } from "node:module"
+import { HttpRecorder, CassetteNotFoundError, InvalidCassetteError, MissingRecordedAtError, type RecorderOptions, type SocketRecorderOptions, type CassetteMetadata } from ${JSON.stringify(pkg.name)}
+import { NodeRuntime, NodeServices, NodeSocket } from "@effect/platform-node"
+import { Clock, DateTime, Effect, FileSystem, Layer } from "effect"
+import { TestClock } from "effect/testing"
+import { FetchHttpClient, HttpClient } from "effect/unstable/http"
 import { Socket } from "effect/unstable/socket"
 
-const options: HttpRecorder.RecorderOptions = { match: () => true, redact: { jsonFields: ["access_token"] } }
-const socketOptions: HttpRecorder.SocketRecorderOptions = { redact: { jsonFields: ["access_token"] } }
-HttpRecorder.layer("consumer", options) satisfies Layer.Layer<HttpClient.HttpClient, never, HttpClient.HttpClient>
-HttpRecorder.layerFetch("consumer", options) satisfies Layer.Layer<HttpClient.HttpClient>
-HttpRecorder.hasCassetteSync("consumer", { directory: "recordings" }) satisfies boolean
-HttpRecorder.removeCassetteSync("consumer", { directory: "recordings" })
-HttpRecorder.layerSocket("consumer/socket", socketOptions).pipe(
-  Layer.provide(NodeSocket.layerWebSocket("wss://example.test")),
-) satisfies Layer.Layer<Socket.Socket>
-HttpRecorder.layerWebSocketConstructor("consumer/websocket", socketOptions).pipe(
-  Layer.provide(NodeSocket.layerWebSocketConstructor),
-) satisfies Layer.Layer<Socket.WebSocketConstructor>
-// @ts-expect-error HTTP request matching does not apply to WebSocket frames.
-HttpRecorder.layerSocket("consumer/socket", { match: () => true })
-`,
-    )
-    await writeFile(
-      path.join(directory, "exports.mjs"),
-      `import { HttpRecorder } from ${JSON.stringify(pkg.name)}
+const options: RecorderOptions = { directory: "recordings", match: (a, b) => a.url === b.url, redact: { jsonFields: ["access_token"] } }
+const socketOptions: SocketRecorderOptions = { directory: "recordings" }
+const metadata = { recordedAt: "2025-01-01T00:00:00.000Z" } satisfies CassetteMetadata
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  yield* fs.makeDirectory("recordings")
+  yield* fs.writeFileString("recordings/consumer.json", JSON.stringify({ version: 1, metadata, interactions: [{
+    transport: "http", request: { method: "GET", url: "https://example.test/", headers: {}, body: "" },
+    response: { status: 200, headers: {}, body: "packaged replay" },
+  }] }))
+  yield* fs.writeFileString("recordings/socket.json", JSON.stringify({ version: 1, metadata, interactions: [] }))
+  assert.equal(yield* HttpRecorder.hasCassette("consumer", options), true)
+  assert.equal(DateTime.toEpochMillis(yield* HttpRecorder.recordedAt("consumer", options)), Date.parse(metadata.recordedAt))
+  assert.equal((yield* HttpRecorder.readCassette("consumer", options)).interactions.length, 1)
+  yield* Effect.gen(function* () {
+    yield* HttpRecorder.setTestClockToRecordedAt("consumer", options)
+    assert.equal(yield* Clock.currentTimeMillis, Date.parse("2025-01-01T00:00:00.000Z"))
+  }).pipe(Effect.provide(TestClock.layer()))
+  const request = HttpClient.get("https://example.test/").pipe(Effect.flatMap((response) => response.text))
+  assert.equal(yield* request.pipe(Effect.provide(HttpRecorder.layerFetch("consumer", options))), "packaged replay")
+  assert.equal(yield* request.pipe(Effect.provide(HttpRecorder.layer("consumer", options).pipe(Layer.provide(FetchHttpClient.layer)))), "packaged replay")
+  yield* Socket.Socket.pipe(Effect.provide(HttpRecorder.layerSocket("socket", socketOptions).pipe(Layer.provide(NodeSocket.layerWebSocket("wss://example.test")))))
+  yield* Socket.WebSocketConstructor.pipe(Effect.provide(HttpRecorder.layerWebSocketConstructor("socket", socketOptions).pipe(Layer.provide(NodeSocket.layerWebSocketConstructor))))
+  yield* HttpRecorder.removeCassette("consumer", options)
+  assert.equal(yield* HttpRecorder.hasCassette("consumer", options), false)
+  yield* HttpRecorder.readCassette("consumer", options).pipe(Effect.match({ onSuccess: () => assert.fail("missing cassette succeeded"), onFailure: (error) => assert.ok(error instanceof CassetteNotFoundError) }))
+  yield* HttpRecorder.hasCassette("../unsafe", options).pipe(Effect.match({ onSuccess: () => assert.fail("unsafe name succeeded"), onFailure: (error) => assert.ok(error instanceof InvalidCassetteError) }))
+  yield* fs.writeFileString("recordings/legacy.json", JSON.stringify({ version: 1, interactions: [] }))
+  yield* HttpRecorder.recordedAt("legacy", options).pipe(Effect.match({ onSuccess: () => assert.fail("missing timestamp succeeded"), onFailure: (error) => assert.ok(error instanceof MissingRecordedAtError) }))
+  const require = createRequire(import.meta.url)
+  assert.throws(() => require.resolve(${JSON.stringify(`${pkg.name}/http/recorder`)}))
+  yield* fs.remove("recordings", { recursive: true })
+})
 
-const namespace = Object.keys(HttpRecorder).sort()
-if (JSON.stringify(namespace) !== JSON.stringify(["hasCassetteSync", "layer", "layerFetch", "layerSocket", "layerWebSocketConstructor", "removeCassetteSync"])) {
-  throw new Error(\`Unexpected HttpRecorder exports: \${namespace}\`)
+NodeRuntime.runMain(program.pipe(Effect.scoped, Effect.provide(NodeServices.layer)))
+`,
+  )
+  yield* fs.writeFileString(
+    path.join(directory, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        strict: true,
+        outDir: "compiled",
+        lib: ["ES2022", "DOM", "ESNext.Disposable"],
+        types: ["node"],
+      },
+      include: ["consumer.ts"],
+    }),
+  )
+  yield* run(
+    "npm",
+    [
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--package-lock=false",
+      archive,
+      `typescript@${pkg.devDependencies.typescript}`,
+      `effect@${pkg.peerDependencies.effect}`,
+      `@effect/platform-node@${pkg.devDependencies["@effect/platform-node"]}`,
+      `@types/node@${pkg.devDependencies["@types/node"]}`,
+    ],
+    directory,
+  )
+  yield* run("npm", ["ls", "effect", "@effect/platform-node-shared", "--all"], directory)
+  yield* run(path.join(directory, "node_modules", ".bin", "tsc"), [], directory)
+  yield* run("node", [path.join(directory, "compiled", "consumer.js")], directory)
+  yield* run("bun", [path.join(directory, "compiled", "consumer.js")], directory)
+})
+
+if (import.meta.main) {
+  BunRuntime.runMain(pack().pipe(Effect.flatMap(verifyPackage), Effect.scoped, Effect.provide(BunServices.layer)))
 }
-`,
-    )
-    await writeFile(
-      path.join(directory, "deep-import.mjs"),
-      `import ${JSON.stringify(`${pkg.name}/http/recorder`)}
-`,
-    )
-    await writeFile(
-      path.join(directory, "tsconfig.json"),
-      JSON.stringify({
-        compilerOptions: {
-          target: "ES2022",
-          module: "NodeNext",
-          moduleResolution: "NodeNext",
-          strict: true,
-          noEmit: true,
-          // Required by effect@4.0.0-beta.83: its declarations currently contain unresolved internal symbols.
-          skipLibCheck: true,
-          lib: ["ES2022", "DOM", "ESNext.Disposable"],
-        },
-        include: ["consumer.ts"],
-      }),
-    )
-
-    await run(
-      [
-        "npm",
-        "install",
-        "--ignore-scripts",
-        "--no-audit",
-        "--no-fund",
-        "--package-lock=false",
-        archive,
-        `typescript@${pkg.devDependencies.typescript}`,
-        `effect@${pkg.peerDependencies.effect}`,
-        `@effect/platform-node-shared@${pkg.dependencies["@effect/platform-node-shared"]}`,
-        `@effect/platform-node@${pkg.devDependencies["@effect/platform-node"]}`,
-      ],
-      directory,
-    )
-    await run(["node", path.join(directory, "exports.mjs")], directory)
-    await run(["bun", path.join(directory, "exports.mjs")], directory)
-    await reject(["node", path.join(directory, "deep-import.mjs")], directory)
-    await run(["npm", "ls", "effect", "@effect/platform-node-shared", "--all"], directory)
-    await run([path.join(directory, "node_modules", ".bin", "tsc"), "--noEmit"], directory)
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
-}
-
-if (import.meta.main) await withPackedArchive(verifyPackage)
