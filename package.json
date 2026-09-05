@@ -36,9 +36,9 @@
     "lint": "oxlint src test examples script",
     "lint:fix": "oxlint --fix src test examples script",
     "check:imports": "bun ./script/check-static-imports.ts",
-    "test": "bun test --timeout 30000 --only-failures",
+    "test": "vitest run",
     "test:examples": "vitest run --config examples/vitest.config.ts",
-    "record:examples": "rm -rf examples/recordings && bun run test:examples",
+    "record:examples": "bun ./script/record-examples.ts",
     "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json --noEmit",
     "build": "bun ./script/build.ts",
     "verify:package": "bun ./script/verify-package.ts",
@@ -62,12 +62,14 @@
   ],
   "devDependencies": {
     "@changesets/cli": "2.31.0",
+    "@effect/platform-bun": "4.0.0-rc.112",
     "@effect/platform-node": "4.0.0-rc.112",
     "@effect/tsgo": "0.39.1",
     "@effect/vitest": "4.0.0-rc.112",
     "@tsconfig/node22": "22.0.2",
     "@types/bun": "latest",
     "@types/node": "24.12.2",
+    "effect": "4.0.0-rc.112",
     "oxfmt": "0.66.0",
     "oxlint": "1.81.0",
     "oxlint-tsgolint": "7.0.2001",
@@ -75,9 +77,7 @@
     "vitest": "4.1.11"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.0.0-rc.112",
-    "@effect/platform-node-shared": "4.0.0-rc.112",
-    "effect": "4.0.0-rc.112"
+    "@effect/platform-node-shared": "4.0.0-rc.112"
   },
   "peerDependencies": {
     "effect": "4.0.0-rc.112",

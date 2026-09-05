@@ -19,9 +19,9 @@ export const canonicalizeJson = (value: unknown): unknown => {
   return value
 }
 
-export const safeText = (value: unknown) => {
+export const safeText = (value: unknown, env: Record<string, string | undefined>) => {
   if (value === undefined) return "undefined"
-  if (secretFindings(value).length > 0) return JSON.stringify(REDACTED)
+  if (secretFindings(value, env).length > 0) return JSON.stringify(REDACTED)
   const text = JSON.stringify(value)
   if (!text) return typeof value
   return text.length > 300 ? `${text.slice(0, 300)}...` : text

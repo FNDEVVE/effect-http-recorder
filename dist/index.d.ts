@@ -1,33 +1,75 @@
-import { Layer } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import { Socket } from "effect/unstable/socket";
-import { Api } from "./api.js";
-/** HTTP and WebSocket cassette recording. */
+import { layer, layerFetch } from "./http/recorder.js";
+import { layerSocket, layerWebSocketConstructor } from "./websocket/recorder.js";
+/** HTTP and WebSocket cassette recording and clock anchoring. */
 export declare const HttpRecorder: {
-    readonly layer: (name: string, options?: Api.RecorderOptions) => Layer.Layer<HttpClient.HttpClient, never, HttpClient.HttpClient>;
-    readonly layerFetch: (name: string, options?: Api.RecorderOptions) => Layer.Layer<HttpClient.HttpClient>;
-    readonly layerSocket: (name: string, options?: Api.SocketRecorderOptions) => Layer.Layer<Socket.Socket, never, Socket.Socket>;
-    readonly layerWebSocketConstructor: (name: string, options?: Api.SocketRecorderOptions) => Layer.Layer<Socket.WebSocketConstructor, never, Socket.WebSocketConstructor>;
-    readonly hasCassetteSync: (name: string, options?: {
+    layer: typeof layer;
+    layerFetch: typeof layerFetch;
+    layerSocket: typeof layerSocket;
+    layerWebSocketConstructor: typeof layerWebSocketConstructor;
+    hasCassette: (name: string, options?: {
         readonly directory?: string;
-    }) => boolean;
-    readonly removeCassetteSync: (name: string, options?: {
+    } | undefined) => import("effect/Effect").Effect<boolean, import("./cassette/store.js").InvalidCassetteError, never>;
+    removeCassette: (name: string, options?: {
         readonly directory?: string;
-    }) => void;
+    } | undefined) => import("effect/Effect").Effect<void, import("./cassette/store.js").InvalidCassetteError, never>;
+    recordedAt: (name: string, options?: {
+        readonly directory?: string;
+    } | undefined) => import("effect/Effect").Effect<import("effect/DateTime").Utc, import("./cassette/store.js").CassetteNotFoundError | import("./cassette/store.js").InvalidCassetteError | import("./cassette/model.js").MissingRecordedAtError, never>;
+    readCassette: (name: string, options?: {
+        readonly directory?: string;
+    } | undefined) => import("effect/Effect").Effect<{
+        readonly version: 1;
+        readonly metadata?: {
+            readonly [x: string]: import("./api.js").JsonValue;
+        } | undefined;
+        readonly interactions: readonly ({
+            readonly transport: "http";
+            readonly request: {
+                readonly method: string;
+                readonly url: string;
+                readonly headers: {
+                    readonly [x: string]: string;
+                };
+                readonly body: string;
+            };
+            readonly response: {
+                readonly status: number;
+                readonly headers: {
+                    readonly [x: string]: string;
+                };
+                readonly body: string;
+                readonly bodyEncoding?: "base64" | "text" | undefined;
+            };
+        } | {
+            readonly transport: "websocket";
+            readonly connection?: {
+                readonly sequence: number;
+                readonly url: string;
+                readonly protocols: readonly string[];
+                readonly close: {
+                    readonly code: number;
+                    readonly reason: string;
+                };
+            } | undefined;
+            readonly events: readonly ({
+                readonly direction: "client" | "server";
+                readonly kind: "text";
+                readonly body: string;
+            } | {
+                readonly direction: "client" | "server";
+                readonly kind: "binary";
+                readonly body: string;
+                readonly bodyEncoding: "base64";
+            })[];
+        })[];
+    }, import("./cassette/store.js").CassetteNotFoundError | import("./cassette/store.js").InvalidCassetteError, never>;
+    setTestClockToRecordedAt: (name: string, options?: {
+        readonly directory?: string;
+    } | undefined) => import("effect/Effect").Effect<import("effect/DateTime").Utc, import("./cassette/store.js").InvalidCassetteError | import("./cassette/model.js").MissingRecordedAtError, never>;
 };
-export declare namespace HttpRecorder {
-    /** Additional JSON metadata stored with a cassette. */
-    type JsonValue = Api.JsonValue;
-    /** Additional JSON metadata stored with a cassette. */
-    type CassetteMetadata = Api.CassetteMetadata;
-    /** Recorder configuration. */
-    type RecorderOptions = Api.RecorderOptions;
-    /** Additive redaction and header-preservation policy. */
-    type RedactOptions = Api.RedactOptions;
-    /** Returns whether an incoming HTTP request matches a recorded request. */
-    type RequestMatcher = Api.RequestMatcher;
-    /** The normalized HTTP request representation used for matching. */
-    type RequestSnapshot = Api.RequestSnapshot;
-    /** Recorder configuration for Effect socket and WebSocket layers. */
-    type SocketRecorderOptions = Api.SocketRecorderOptions;
-}
+export type { CassetteMetadata, JsonValue, RecorderOptions, RedactOptions, RequestMatcher, RequestSnapshot, SocketRecorderOptions, } from "./api.js";
+export type { Cassette, Interaction } from "./cassette/model.js";
+export { MissingRecordedAtError } from "./cassette/model.js";
+export { CassetteNotFoundError, InvalidCassetteError, UnsafeCassetteError, hasCassette, readCassette, recordedAt, removeCassette, } from "./cassette/store.js";
+export * as CassetteService from "./cassette/store.js";
+export { setTestClockToRecordedAt } from "./clock.js";

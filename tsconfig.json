@@ -11,5 +11,5 @@
       "effect-http-recorder": ["./src/index.ts"]
     }
   },
-  "include": ["src", "script", "examples"]
+  "include": ["src", "script", "examples", "vitest.config.ts"]
 }

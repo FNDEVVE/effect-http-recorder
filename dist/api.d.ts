@@ -32,4 +32,3 @@ export interface RecorderOptions {
 }
 /** Recorder configuration for Effect socket and WebSocket layers. */
 export type SocketRecorderOptions = Omit<RecorderOptions, "match">;
-export * as Api from "./api.js";

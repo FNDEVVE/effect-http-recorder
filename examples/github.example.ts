@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest"
-import { Config, Context, Effect, Layer, Option, Random, Schema } from "effect"
+import { Config, Context, Effect, Layer, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { HttpRecorder } from "effect-http-recorder"
 
@@ -37,16 +37,12 @@ class GitHub extends Context.Service<GitHub>()("example/GitHub", {
   static readonly layer = Layer.effect(this, this.make)
 }
 
-it.live(
+it.effect(
   "loads multiple repositories through the GitHub service",
   () =>
     Effect.gen(function* () {
       const github = yield* GitHub
-      const getRepository = (owner: string, name: string) =>
-        Effect.gen(function* () {
-          yield* Effect.sleep(yield* Random.nextIntBetween(0, 50))
-          return yield* github.getRepository(owner, name)
-        })
+      const getRepository = github.getRepository
 
       const [effect, typescript, bun] = yield* Effect.all(
         [

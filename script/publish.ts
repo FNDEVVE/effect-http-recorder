@@ -1,21 +1,18 @@
 #!/usr/bin/env bun
-import { fileURLToPath } from "node:url"
-import { withPackedArchive } from "./pack.js"
+import { BunRuntime, BunServices } from "@effect/platform-bun"
+import { Config, Effect } from "effect"
+import { pack, projectDirectory, run } from "./pack.js"
 import { verifyPackage } from "./verify-package.js"
 
-const dir = fileURLToPath(new URL("..", import.meta.url))
-process.chdir(dir)
-
-await withPackedArchive(async (archive) => {
-  await verifyPackage(archive)
-  const provenance = process.env.GITHUB_ACTIONS === "true" ? "--provenance" : "--provenance=false"
-  const publish = Bun.spawn(["npm", "publish", archive, "--tag", "beta", provenance], {
-    cwd: dir,
-    env: process.env,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  })
-  const exitCode = await publish.exited
-  if (exitCode !== 0) throw new Error(`npm publish exited with code ${exitCode}`)
+const publish = Effect.gen(function* () {
+  const archive = yield* pack()
+  yield* verifyPackage(archive)
+  const ci = yield* Config.boolean("GITHUB_ACTIONS").pipe(Config.withDefault(false))
+  yield* run(
+    "npm",
+    ["publish", archive, "--tag", "beta", ci ? "--provenance" : "--provenance=false"],
+    yield* projectDirectory,
+  )
 })
+
+BunRuntime.runMain(publish.pipe(Effect.scoped, Effect.provide(BunServices.layer)))

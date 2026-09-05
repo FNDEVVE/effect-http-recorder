@@ -1,6 +1,6 @@
 # effect-http-recorder
 
-Record real Effect HTTP and WebSocket traffic once, then replay it from deterministic JSON cassettes.
+Record and replay HTTP and WebSocket traffic through Effect v4 services, layers, schemas, and scoped resources.
 
 Use it for provider integrations, retries, polling, multi-step flows, and any test where hand-written HTTP mocks hide too much of the real request shape.
 
@@ -75,13 +75,18 @@ HttpRecorder.layer(name, options?)
 HttpRecorder.layerFetch(name, options?)
 HttpRecorder.layerSocket(name, options?)
 HttpRecorder.layerWebSocketConstructor(name, options?)
-HttpRecorder.hasCassetteSync(name, options?)
-HttpRecorder.removeCassetteSync(name, options?)
+HttpRecorder.readCassette(name, options?)
+HttpRecorder.recordedAt(name, options?)
+HttpRecorder.setTestClockToRecordedAt(name, options?)
+HttpRecorder.hasCassette(name, options?)
+HttpRecorder.removeCassette(name, options?)
 ```
 
-That is the complete runtime API. `layer` decorates an application-provided `HttpClient`; `layerFetch` is the convenience layer that supplies Effect's fetch client. `layerWebSocketConstructor` decorates Effect's `Socket.WebSocketConstructor`, recording every dynamically selected URL and protocol. `layerSocket` is the lower-level transport-neutral decorator for an application-provided `Socket.Socket`.
+`layer` decorates an application-provided `HttpClient`; `layerFetch` supplies Effect's fetch client. `layerWebSocketConstructor` decorates `Socket.WebSocketConstructor`, recording dynamically selected URLs and protocols. `layerSocket` decorates an application-provided `Socket.Socket`.
 
-Use `hasCassetteSync` when registering fixture-gated tests. `removeCassetteSync` explicitly removes one cassette before a focused refresh; removing a missing cassette is a no-op. Both helpers use the same cassette-name validation and default directory as the recorder layers.
+Cassette helpers return Effects, not synchronous values. `readCassette` returns the complete cassette, including metadata; `recordedAt` returns a `DateTime.Utc`. `hasCassette` checks for a recording, and `removeCassette` removes one recording (a missing cassette is a no-op). Invalid names and filesystem failures stay in the typed error channel.
+
+Each helper accepts `{ directory }`. An explicit directory selects that filesystem store; otherwise an injected `CassetteService.Service` is used when available, falling back to the default recordings directory. Recorder layers never change the clock automatically.
 
 Use `layer` to record through another Effect HTTP transport:
 
@@ -92,7 +97,47 @@ import { Layer } from "effect"
 const recorder = HttpRecorder.layer("users/get-one").pipe(Layer.provide(NodeHttpClient.layerUndici))
 ```
 
-The `HttpRecorder` namespace also exposes the configuration types `RecorderOptions`, `SocketRecorderOptions`, `RedactOptions`, `RequestMatcher`, `RequestSnapshot`, and `CassetteMetadata`.
+Configuration types are named exports from the package root: `RecorderOptions`, `SocketRecorderOptions`, `RedactOptions`, `RequestMatcher`, `RequestSnapshot`, and `CassetteMetadata`. The cassette helpers and error classes are also available as named exports. `CassetteService` exposes the storage service and its filesystem and memory layers for explicit dependency injection.
+
+## Deterministic Time
+
+Replay preserves HTTP exchanges, not the current date. If an application builds a request from `DateTime.now`, replaying a month later can produce different query parameters even when the application code is unchanged.
+
+Anchor `TestClock` **before** constructing a time-dependent request:
+
+```ts
+import { expect, it } from "@effect/vitest"
+import { DateTime, Effect } from "effect"
+import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpRecorder } from "effect-http-recorder"
+
+const name = "events/date-window"
+const options = { directory: "test/fixtures/recordings" }
+
+it.effect("replays a seven-day event window", () =>
+  Effect.gen(function* () {
+    const recordedAt = yield* HttpRecorder.setTestClockToRecordedAt(name, options)
+    const now = yield* DateTime.now
+    const request = HttpClientRequest.get("https://example.com/events").pipe(
+      HttpClientRequest.setUrlParams({
+        from: DateTime.formatIso(DateTime.add(now, { days: -7 })),
+        to: DateTime.formatIso(DateTime.add(now, { days: 7 })),
+      }),
+    )
+    const http = yield* HttpClient.HttpClient
+    const response = yield* http.execute(request)
+
+    expect(response.status).toBe(200)
+    expect(DateTime.toEpochMillis(now)).toBe(DateTime.toEpochMillis(recordedAt))
+  }).pipe(Effect.provide(HttpRecorder.layerFetch(name, options))),
+)
+```
+
+Use your provider's endpoint and decode its response in application code. The repository's clock integration test uses a local echo endpoint: it records `-7/+7` day query parameters, stops the server, advances thirty days, observes a replay mismatch, then anchors the clock and successfully replays the original request.
+
+`it.effect` supplies `TestClock`; `it.live` does not. A missing cassette makes the helper read the live clock and use that as the initial recording time. An existing legacy cassette without a timestamp fails with `MissingRecordedAtError`; re-record it to enable clock anchoring. A malformed timestamp fails with `InvalidCassetteError`, rather than silently falling back to today.
+
+Use pure `DateTime.add` for date arithmetic. For sleeps and retries, fork the sleeping effect, advance `TestClock` with `TestClock.adjust`, then join the fiber.
 
 ## WebSockets
 
@@ -229,7 +274,9 @@ See [`examples/`](./examples) for complete HTTP and WebSocket examples.
 
 ## Cassettes
 
-Cassettes are readable JSON files intended to be committed with your tests. HTTP interactions are stored in request order. WebSocket cassettes preserve the observed order of client and server frames. Text stays readable; binary bodies and frames are stored losslessly as base64.
+Cassettes are readable version-1 JSON files intended to be committed with your tests. HTTP interactions are stored in request order. WebSocket cassettes preserve the observed order of client and server frames. Text stays readable; binary bodies and frames are stored losslessly as base64.
+
+`metadata.recordedAt` is an ISO UTC timestamp taken from Effect's clock on the first successful append of a recording session. Later appends retain it. Existing version-1 cassettes without this metadata still replay normally; only clock anchoring requires the timestamp.
 
 ## Current Limits
 

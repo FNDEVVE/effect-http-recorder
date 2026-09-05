@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Encoding, Result, Schema } from "effect"
 
 export const RequestSnapshotSchema = Schema.Struct({
   method: Schema.String,
@@ -10,11 +10,16 @@ export const RequestSnapshotSchema = Schema.Struct({
 export type { RequestSnapshot } from "../api.js"
 
 export const ResponseSnapshotSchema = Schema.Struct({
-  status: Schema.Number,
+  status: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 200, maximum: 599 })),
   headers: Schema.Record(Schema.String, Schema.String),
   body: Schema.String,
   bodyEncoding: Schema.optional(Schema.Literals(["text", "base64"])),
-})
+}).check(
+  Schema.makeFilter(
+    (snapshot) => snapshot.bodyEncoding !== "base64" || Result.isSuccess(Encoding.decodeBase64(snapshot.body)),
+    { message: "Invalid base64 response body" },
+  ),
+)
 
 export interface ResponseSnapshot extends Schema.Schema.Type<typeof ResponseSnapshotSchema> {}
 

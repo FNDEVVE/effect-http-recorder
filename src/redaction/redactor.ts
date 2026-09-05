@@ -1,8 +1,8 @@
 import { Option, Schema } from "effect"
 import type { RequestSnapshot, ResponseSnapshot } from "../http/model.js"
-import type { RedactOptions } from "../options.js"
+import type { RedactOptions } from "../api.js"
 
-export type { RedactOptions } from "../options.js"
+export type { RedactOptions } from "../api.js"
 
 export const REDACTED = "[REDACTED]"
 
@@ -46,9 +46,11 @@ export const redactUrl = (
   if (url.username) url.username = REDACTED
   if (url.password) url.password = REDACTED
   const redacted = redactionSet(query, DEFAULT_REDACT_QUERY)
-  for (const key of url.searchParams.keys()) {
-    if (redacted.has(key.toLowerCase())) url.searchParams.set(key, REDACTED)
+  const parameters = new URLSearchParams()
+  for (const [key, value] of url.searchParams) {
+    parameters.append(key, redacted.has(key.toLowerCase()) ? REDACTED : value)
   }
+  url.search = parameters.toString()
   return transform?.(url.toString()) ?? url.toString()
 }
 

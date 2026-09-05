@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Encoding, Result, Schema } from "effect"
 
 export const WebSocketEventSchema = Schema.Union([
   Schema.Struct({
@@ -9,7 +9,9 @@ export const WebSocketEventSchema = Schema.Union([
   Schema.Struct({
     direction: Schema.Literals(["client", "server"]),
     kind: Schema.tag("binary"),
-    body: Schema.String,
+    body: Schema.String.check(
+      Schema.makeFilter((body) => Result.isSuccess(Encoding.decodeBase64(body)), { message: "Invalid base64 frame" }),
+    ),
     bodyEncoding: Schema.Literal("base64"),
   }),
 ])
